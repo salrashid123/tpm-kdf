@@ -1,0 +1,43 @@
+package main
+
+import (
+	"encoding/base32"
+	"encoding/hex"
+	"flag"
+	"fmt"
+	"os"
+
+	"github.com/hashicorp/vault/sdk/helper/kdf"
+	tkdf "github.com/salrashid123/tpm-kdf/hmac"
+)
+
+var (
+	tpmPath      = flag.String("tpm-path", "/dev/tpmrm0", "Path to the TPM device (character device or a Unix socket).")
+	parentPass   = flag.String("parentPass", "", "Passphrase for the key  parent ")
+	keyPass      = flag.String("keyPass", "", "Passphrase for the key  key ")
+	data         = flag.String("data", "foo", "source passphrase to derive data")
+	length       = flag.Int("length", 256, "Lenth of derived key")
+	keyFile      = flag.String("keyFile", "example/certs/tpm-key.pem", "PEM HMAC Key")
+	outputBase64 = flag.Bool("outputBase64", false, "Output as base64")
+)
+
+func main() {
+
+	flag.Parse()
+
+	prfLen := kdf.HMACSHA256PRFLen
+
+	r, err := kdf.CounterMode(func(key []byte, rdata []byte) ([]byte, error) {
+		return tkdf.TPMHMAC(*tpmPath, *keyFile, []byte(*parentPass), []byte(*keyPass), rdata)
+	}, prfLen, nil, []byte(*data), uint32(*length))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "tpm-kdf: Error %v", err)
+		os.Exit(1)
+	}
+
+	if *outputBase64 {
+		fmt.Printf("%s", base32.StdEncoding.EncodeToString(r))
+	} else {
+		fmt.Printf("%s", hex.EncodeToString(r))
+	}
+}
