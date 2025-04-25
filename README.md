@@ -16,6 +16,7 @@ Library basically overrides Hashicorp Vaults [kdf.CounterMode](github.com/hashic
 * [golang-jwt for Trusted Platform Module (TPM)](https://github.com/salrashid123/golang-jwt-tpm)
 * [tpm2 key utility](https://github.com/salrashid123/tpm2genkey)
 * [ASN1 format for TPM keys](https://github.com/salrashid123/tpm2/tree/master/tpm-key)
+* [TPM backed crypto/rand Reader](https://github.com/salrashid123/tpmrand)
 
 ---
 
