@@ -5,7 +5,7 @@ CLI and library which provides a `counter mode KDF` as described in [NIST SP 800
 
 This CLI utilizes an TPM-based HMAC key as a basis to derive the KDF.
 
-Library basically overrides Hashicorp Vaults [kdf.CounterMode](github.com/hashicorp/vault/sdk/helper/kdf#CounterMode)
+Library basically overrides Canonical's  [go-kbkdf](https://github.com/canonical/go-kbkdf)
 
 ---
 
