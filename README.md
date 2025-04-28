@@ -33,6 +33,7 @@ import (
 )
 
 	keyFileBytes, err := os.ReadFile("/path/to/tpm-key.pem")
+	b := []byte("foo")
 
 	h, err := tpmkdf.TPMKDF("/dev/tpmrm0", nil, keyFileBytes, nil, nil)
 	rc := kbkdf.CounterModeKey(h, nil, nil, b, 256)	
@@ -61,6 +62,8 @@ if you want to manage the TPM read closer externally, set `tpmPath` nil and set 
 		rwc.Close()
 	}()
 	h, err := tpmkdf.TPMKDF(nil, rwc, keyFileBytes, nil, nil)
+	b := []byte("foo")
+
 	rc := kbkdf.CounterModeKey(h, nil, nil, b, 256)	
 
 	fmt.Printf("KDF %s\n", hex.EncodeToString(rc))
