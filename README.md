@@ -7,7 +7,6 @@ This CLI utilizes an TPM-based HMAC key as a basis to derive the KDF.
 
 Library basically overrides Hashicorp Vaults [kdf.CounterMode](github.com/hashicorp/vault/sdk/helper/kdf#CounterMode)
 
-
 ---
 
 #### References
@@ -16,7 +15,6 @@ Library basically overrides Hashicorp Vaults [kdf.CounterMode](github.com/hashic
 * [golang-jwt for Trusted Platform Module (TPM)](https://github.com/salrashid123/golang-jwt-tpm)
 * [tpm2 key utility](https://github.com/salrashid123/tpm2genkey)
 * [ASN1 format for TPM keys](https://github.com/salrashid123/tpm2/tree/master/tpm-key)
-* [TPM backed crypto/rand Reader](https://github.com/salrashid123/tpmrand)
 
 ---
 
@@ -29,21 +27,51 @@ The following with derive a key from "foo":
 ```golang
 import (
 	"encoding/hex"
-	"github.com/hashicorp/vault/sdk/helper/kdf"
-	tkdf "github.com/salrashid123/tpm-kdf/hmac"
+	kbkdf "github.com/canonical/go-kbkdf"
+	"github.com/canonical/go-kbkdf/hmac_prf"
+	tpmkdf "github.com/salrashid123/tpm-kdf"
 )
 
-	prfLen := kdf.HMACSHA256PRFLen
-	r, err := kdf.CounterMode(func(key []byte, data []byte) ([]byte, error) {
-		return tkdf.TPMHMAC("/dev/tpmrm0", "/path/to/tpm-key.pem", nil, nil, data)
-	}, prfLen, nil, []byte("foo"), 256)
+	keyFileBytes, err := os.ReadFile("/path/to/tpm-key.pem")
 
-	fmt.Printf("KDF %s\n", hex.EncodeToString(r))
+	h, err := tpmkdf.TPMKDF("/dev/tpmrm0", nil, keyFileBytes, nil, nil)
+	rc := kbkdf.CounterModeKey(h, nil, nil, b, 256)	
+
+	fmt.Printf("KDF %s\n", hex.EncodeToString(rc))
+```
+
+The core accepts the following parameters:
+
+```golang
+func TPMKDF(
+	tpmPath string, 
+	rwc io.ReadWriteCloser, 
+	pemkeyBytes []byte, 
+	parentAuth []byte, 
+	keyAuth []byte) (*tpmPrf, error) {
+```
+
+if you want the library to open and close the tpm for every call, specify the `tpmPath` (eg `tpmPath=/dev/tpmrm0`)
+
+if you want to manage the TPM read closer externally, set `tpmPath` nil and set the `rwc` to a TPM
+
+```golang
+	rwc, err := tkdf.OpenTPM(*tpmPath)
+	defer func() {
+		rwc.Close()
+	}()
+	h, err := tpmkdf.TPMKDF(nil, rwc, keyFileBytes, nil, nil)
+	rc := kbkdf.CounterModeKey(h, nil, nil, b, 256)	
+
+	fmt.Printf("KDF %s\n", hex.EncodeToString(rc))
+
 ```
 
 ### CLI
 
-As a library, provide the PEM formatted TPM private key and the length of of the data to mac
+As a library, provide the PEM formatted TPM private key and the length of of the data to mac.
+
+You can get the signed and attested binary on the `Releases` page
 
 ```bash
 ./tpm-kdf  --data=foo \
@@ -56,10 +84,15 @@ As a library, provide the PEM formatted TPM private key and the length of of the
 | **`-keyFile`** | Path to the PEM formatted KeyFile |
 | **`-length`** | result size |
 | **`-data`** | data to kdf |
+| **`-outputBase64`** | output as base64 |
+
+The `keyFile` parameter here accepts a PEM formatted key as described in [ASN.1 Specification for TPM 2.0 Key Files](https://www.hansenpartnership.com/draft-bottomley-tpm2-keys.html).
+
+You can save a key in PEM format using [tpm2_encodeobject](https://github.com/tpm2-software/tpm2-tools/blob/master/man/tpm2_encodeobject.1.md) or [tpm2 key utility](https://github.com/salrashid123/tpm2genkey)
 
 #### Setup
 
-The following sets up a sofware TPM but you can ofcourse use the real thing.  It imports an HMAC key but you can ofcourse use one thats embedded inside the TPM forever.
+The following sets up a sofware TPM but you can ofcourse use the real thing.  
 
 ```bash
 mkdir myvtpm
@@ -70,37 +103,42 @@ sudo swtpm socket --tpmstate dir=myvtpm \
 
 export TPM2TOOLS_TCTI="swtpm:port=2321"
 
-export secret="my_api_key"
-echo -n $secret > hmac.key
-hexkey=$(xxd -p -c 256 < hmac.key)
-echo $hexkey
+### if you wanted to generate a new key, then run the following.
+###  the example/ folder contains key files with this passphrase.
 
-printf '\x00\x00' > unique.dat
-tpm2_createprimary -C o -G ecc \
-    -g sha256  -c primary.ctx -a "fixedtpm|fixedparent|sensitivedataorigin|userwithauth|noda|restricted|decrypt" -u unique.dat
+# export secret="my_api_key"
+# echo -n $secret > hmac.key
+# hexkey=$(xxd -p -c 256 < hmac.key)
+# echo $hexkey
 
-tpm2_import -C primary.ctx -G hmac -i hmac.key -u hmac.pub -r hmac.priv
-tpm2_flushcontext -t && tpm2_flushcontext -s && tpm2_flushcontext -l
-tpm2_load -C primary.ctx -u hmac.pub -r hmac.priv -c hmac.ctx
-tpm2_encodeobject -C primary.ctx -u hmac.pub -r hmac.priv -o tpm-key.pem
+# printf '\x00\x00' > unique.dat
+# tpm2_createprimary -C o -G ecc \
+#     -g sha256  -c primary.ctx -a "fixedtpm|fixedparent|sensitivedataorigin|userwithauth|noda|restricted|decrypt" -u unique.dat
 
-go run cmd/main.go  --data=foo --keyFile=example/certs/tpm-key.pem --length=256 --tpm-path="127.0.0.1:2321"
+# tpm2_import -C primary.ctx -G hmac -i hmac.key -u hmac.pub -r hmac.priv
+# tpm2_flushcontext -t && tpm2_flushcontext -s && tpm2_flushcontext -l
+# tpm2_load -C primary.ctx -u hmac.pub -r hmac.priv -c hmac.ctx
+# tpm2_encodeobject -C primary.ctx -u hmac.pub -r hmac.priv -o tpm-key.pem
+
+go run cmd/main.go  --data=foo \
+   --keyFile=example/certs/tpm-key.pem --length=256 --tpm-path="127.0.0.1:2321"
 ```
 
-If you want to setup a key with auth, create an authsession and policypassword after the primary
+If you want to setup a key with auth, create an authsession and `policypassword` after the primary
 
 ```bash
-tpm2_startauthsession -S session.dat
-tpm2_policypassword -S session.dat -L policy.dat
-tpm2_flushcontext session.dat
+# tpm2_startauthsession -S session.dat
+# tpm2_policypassword -S session.dat -L policy.dat
+# tpm2_flushcontext session.dat
 
-tpm2_import -C primary.ctx -G hmac -i hmac.key -u hmac.pub -r hmac.priv -L policy.dat -p testpswd
-tpm2_flushcontext -t && tpm2_flushcontext -s && tpm2_flushcontext -l
-tpm2_load -C primary.ctx -u hmac.pub -r hmac.priv -c hmac.ctx
-tpm2_encodeobject -C primary.ctx -u hmac.pub -r hmac.priv -o tpm-key.pem 
-tpm2_flushcontext -t && tpm2_flushcontext -s && tpm2_flushcontext -l
+# tpm2_import -C primary.ctx -G hmac -i hmac.key -u hmac.pub -r hmac.priv -L policy.dat -p testpswd
+# tpm2_flushcontext -t && tpm2_flushcontext -s && tpm2_flushcontext -l
+# tpm2_load -C primary.ctx -u hmac.pub -r hmac.priv -c hmac.ctx
+# tpm2_encodeobject -C primary.ctx -u hmac.pub -r hmac.priv -o tpm-key.pem 
+# tpm2_flushcontext -t && tpm2_flushcontext -s && tpm2_flushcontext -l
 
-go run cmd/main.go  --data=foo --keyFile=example/certs_policy/tpm-key.pem --keyPass=testpswd --length=256 --tpm-path="127.0.0.1:2321"
+go run cmd/main.go  --data=foo \
+   --keyFile=example/certs_policy/tpm-key.pem --keyPass=testpswd --length=256 --tpm-path="127.0.0.1:2321"
 ```
 
 THe current release only uses passwordAuth.  

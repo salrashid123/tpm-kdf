@@ -1,14 +1,14 @@
 package main
 
 import (
-	"encoding/base32"
+	"encoding/base64"
 	"encoding/hex"
 	"flag"
 	"fmt"
 	"os"
 
-	"github.com/hashicorp/vault/sdk/helper/kdf"
-	tkdf "github.com/salrashid123/tpm-kdf/hmac"
+	"github.com/canonical/go-kbkdf"
+	tpmkdf "github.com/salrashid123/tpm-kdf"
 )
 
 var (
@@ -25,18 +25,20 @@ func main() {
 
 	flag.Parse()
 
-	prfLen := kdf.HMACSHA256PRFLen
-
-	r, err := kdf.CounterMode(func(key []byte, rdata []byte) ([]byte, error) {
-		return tkdf.TPMHMAC(*tpmPath, *keyFile, []byte(*parentPass), []byte(*keyPass), rdata)
-	}, prfLen, nil, []byte(*data), uint32(*length))
+	c, err := os.ReadFile(*keyFile)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "tpm-kdf: Error %v", err)
 		os.Exit(1)
 	}
 
+	h, err := tpmkdf.TPMKDF(*tpmPath, nil, c, []byte(*parentPass), []byte(*keyPass))
+	if err != nil {
+		panic(err)
+	}
+	r := kbkdf.CounterModeKey(h, nil, nil, []byte(*data), uint32(*length))
+
 	if *outputBase64 {
-		fmt.Printf("%s", base32.StdEncoding.EncodeToString(r))
+		fmt.Printf("%s", base64.StdEncoding.EncodeToString(r))
 	} else {
 		fmt.Printf("%s", hex.EncodeToString(r))
 	}

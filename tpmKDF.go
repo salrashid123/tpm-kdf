@@ -1,7 +1,8 @@
-package hmac
+package tpmkdf
 
 import (
-	"crypto/rand"
+	"crypto"
+	"crypto/sha256"
 	"fmt"
 	"io"
 	"net"
@@ -10,20 +11,19 @@ import (
 	_ "crypto/sha256"
 	_ "crypto/sha512"
 
-	keyfile "github.com/foxboron/go-tpm-keyfiles"
+	kbkdf "github.com/canonical/go-kbkdf"
 	"github.com/google/go-tpm-tools/simulator"
 	"github.com/google/go-tpm/tpm2"
 	"github.com/google/go-tpm/tpm2/transport"
 	"github.com/google/go-tpm/tpmutil"
-)
+	"github.com/salrashid123/tpm-kdf/hmac"
 
-const (
-	maxInputBuffer = 1024 // max buffer for TPM (TODO: interrogate tpm2_getcap to derive this)
+	keyfile "github.com/foxboron/go-tpm-keyfiles"
 )
 
 var TPMDEVICES = []string{"/dev/tpm0", "/dev/tpmrm0"}
 
-func openTPM(path string) (io.ReadWriteCloser, error) {
+func OpenTPM(path string) (io.ReadWriteCloser, error) {
 	if slices.Contains(TPMDEVICES, path) {
 		return tpmutil.OpenTPM(path)
 	} else if path == "simulator" {
@@ -33,15 +33,18 @@ func openTPM(path string) (io.ReadWriteCloser, error) {
 	}
 }
 
-// TPMHMAC performs HMAC operation for some data.
-//
-//	tpmPath: path to the TPM (/dev/tpmrm0)
-//	rwc: io.ReadWriteCloser for a TPM
-//	pemkey: the PEM formatted TPM private hmac key
-//	parentAuth: TPM passphrase auth for the parent
-//	keyAuth:  TPM passphrase auth for the hmac key
-//	data:  the data to hmac
-func TPMHMAC(tpmPath string, rwc io.ReadWriteCloser, pemkeyBytes []byte, parentAuth []byte, keyAuth []byte, data []byte) ([]byte, error) {
+type tpmPrf struct {
+	prf
+	tpmPath     string
+	rwc         io.ReadWriteCloser
+	pemkeyBytes []byte
+	parentAuth  []byte
+	keyAuth     []byte
+}
+
+type prf crypto.Hash
+
+func TPMKDF(tpmPath string, rwc io.ReadWriteCloser, pemkeyBytes []byte, parentAuth []byte, keyAuth []byte) (*tpmPrf, error) {
 
 	var irwc io.ReadWriteCloser
 
@@ -49,7 +52,7 @@ func TPMHMAC(tpmPath string, rwc io.ReadWriteCloser, pemkeyBytes []byte, parentA
 		irwc = rwc
 	} else if tpmPath != "" {
 		var err error
-		irwc, err = openTPM(tpmPath)
+		irwc, err = OpenTPM(tpmPath)
 		if err != nil {
 			return nil, err
 		}
@@ -153,94 +156,32 @@ func TPMHMAC(tpmPath string, rwc io.ReadWriteCloser, pemkeyBytes []byte, parentA
 		_, _ = flushContextCmd.Execute(rwr)
 	}()
 
-	numBytes := 32
-	randomBytes := make([]byte, numBytes)
-	_, err = rand.Read(randomBytes)
+	return &tpmPrf{
+		tpmPath:     tpmPath,
+		rwc:         rwc,
+		pemkeyBytes: pemkeyBytes,
+		parentAuth:  parentAuth,
+		keyAuth:     keyAuth,
+	}, nil
+}
+
+func (p tpmPrf) Size() uint32 {
+	return uint32(sha256.Size)
+	// return uint32(crypto.Hash(p.prf).Size())
+}
+
+func (p tpmPrf) Run(s, x []byte) []byte {
+	// h := hmac.New(sha256.New, []byte("my_api_key"))
+	// h.Write(x)
+	// return h.Sum(nil)
+
+	f, err := hmac.TPMHMAC(p.tpmPath, p.rwc, p.pemkeyBytes, p.parentAuth, p.keyAuth, x)
 	if err != nil {
-		return nil, err
+		return nil
 	}
+	return f
+}
 
-	objAuth := &tpm2.TPM2BAuth{
-		Buffer: randomBytes,
-	}
-
-	var sas tpm2.Session
-	var sasCloser func() error
-
-	// if it has auth, setup a policy auth value session
-	if keyAuth != nil {
-		sas, sasCloser, err = tpm2.PolicySession(rwr, tpm2.TPMAlgSHA256, 16, []tpm2.AuthOption{tpm2.Auth(keyAuth), tpm2.AESEncryption(128, tpm2.EncryptIn), tpm2.Salted(createEKRsp.ObjectHandle, *ePubName)}...)
-		if err != nil {
-			return nil, err
-		}
-
-		_, err = tpm2.PolicyAuthValue{
-			PolicySession: sas.Handle(),
-		}.Execute(rwr)
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		// otherwise just hmac
-		sas, sasCloser, err = tpm2.HMACSession(rwr, tpm2.TPMAlgSHA256, 16, tpm2.Auth(keyAuth), tpm2.AESEncryption(128, tpm2.EncryptIn), tpm2.Salted(createEKRsp.ObjectHandle, *ePubName))
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	defer func() {
-		_ = sasCloser()
-	}()
-
-	flushContextCmd := tpm2.FlushContext{
-		FlushHandle: createEKRsp.ObjectHandle,
-	}
-	_, _ = flushContextCmd.Execute(rwr)
-
-	// now start hmac
-	rspHS, err := tpm2.HmacStart{
-		Handle: tpm2.AuthHandle{
-			Handle: hKey.ObjectHandle,
-			Name:   hKey.Name,
-			Auth:   sas,
-		},
-		Auth:    *objAuth,
-		HashAlg: tpm2.TPMAlgSHA256,
-	}.Execute(rwr)
-	if err != nil {
-		return nil, err
-	}
-
-	authHandle := tpm2.AuthHandle{
-		Name:   hKey.Name,
-		Handle: rspHS.SequenceHandle,
-		Auth:   tpm2.PasswordAuth(objAuth.Buffer),
-	}
-	for len(data) > maxInputBuffer {
-		_, err := tpm2.SequenceUpdate{
-			SequenceHandle: authHandle,
-			Buffer: tpm2.TPM2BMaxBuffer{
-				Buffer: data[:maxInputBuffer],
-			},
-		}.Execute(rwr, esess)
-		if err != nil {
-			return nil, err
-		}
-
-		data = data[maxInputBuffer:]
-	}
-
-	rspSC, err := tpm2.SequenceComplete{
-		SequenceHandle: authHandle,
-		Buffer: tpm2.TPM2BMaxBuffer{
-			Buffer: data,
-		},
-		Hierarchy: tpm2.TPMRHOwner,
-	}.Execute(rwr, esess)
-	if err != nil {
-		return nil, err
-	}
-
-	return rspSC.Result.Buffer, nil
-
+func From(tpmPath string, rwc io.ReadWriteCloser, pemkeyBytes []byte, parentAuth []byte, keyAuth []byte) (kbkdf.PRF, error) {
+	return TPMKDF(tpmPath, rwc, pemkeyBytes, parentAuth, keyAuth)
 }

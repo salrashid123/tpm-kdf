@@ -4,9 +4,12 @@ import (
 	"encoding/hex"
 	"flag"
 	"fmt"
+	"os"
 
-	"github.com/hashicorp/vault/sdk/helper/kdf"
-	tkdf "github.com/salrashid123/tpm-kdf/hmac"
+	"github.com/canonical/go-kbkdf"
+	"github.com/canonical/go-kbkdf/hmac_prf"
+
+	tpmkdf "github.com/salrashid123/tpm-kdf"
 )
 
 var (
@@ -19,28 +22,32 @@ func main() {
 
 	flag.Parse()
 
-	prf := kdf.HMACSHA256PRF
-	prfLen := kdf.HMACSHA256PRFLen
-
 	b := []byte("foo")
-
-	/// Vault
-	out, err := kdf.CounterMode(prf, prfLen, []byte(*key), b, 256)
-	if err != nil {
-		panic(err)
-	}
-
-	fmt.Printf("Vault  KDF %s\n", hex.EncodeToString(out))
 
 	//// TPM
 
-	r, err := kdf.CounterMode(func(key []byte, data []byte) ([]byte, error) {
-		return tkdf.TPMHMAC(*tpmPath, *in, nil, []byte("testpswd"), data)
-	}, prfLen, nil, b, 256)
+	rwc, err := tpmkdf.OpenTPM(*tpmPath)
+	if err != nil {
+		panic(err)
+	}
+	defer func() {
+		rwc.Close()
+	}()
+
+	c, err := os.ReadFile(*in)
 	if err != nil {
 		panic(err)
 	}
 
-	fmt.Printf("TPM    KDF %s\n", hex.EncodeToString(r))
+	k := []byte("my_api_key")
+	r := kbkdf.CounterModeKey(hmac_prf.SHA256, k, nil, b, 256)
+	fmt.Printf("CounterModeKey  kbkdf  KDF %s\n", hex.EncodeToString(r))
+
+	h, err := tpmkdf.TPMKDF(*tpmPath, nil, c, nil, []byte("testpswd"))
+	if err != nil {
+		panic(err)
+	}
+	rc := kbkdf.CounterModeKey(h, nil, nil, b, 256)
+	fmt.Printf("CounterModeKey  TPM  KDF %s\n", hex.EncodeToString(rc))
 
 }
