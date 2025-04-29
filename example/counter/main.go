@@ -42,7 +42,7 @@ func main() {
 	////  using TPM
 
 	rc, err := kdf.CounterMode(func(key []byte, data []byte) ([]byte, error) {
-		return tkdf.TPMHMAC(*tpmPath, nil, c, nil, nil, data)
+		return tkdf.TPMHMAC(*tpmPath, nil, c, nil, nil, false, data)
 	}, prfLen, nil, b, 256)
 	if err != nil {
 		panic(err)

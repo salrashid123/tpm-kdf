@@ -37,7 +37,7 @@ const (
 //	parentAuth: TPM passphrase auth for the parent
 //	keyAuth:  TPM passphrase auth for the hmac key
 //	data:  the data to hmac
-func TPMHMAC(tpmPath string, rwc io.ReadWriteCloser, pemkeyBytes []byte, parentAuth []byte, keyAuth []byte, data []byte) ([]byte, error) {
+func TPMHMAC(tpmPath string, rwc io.ReadWriteCloser, pemkeyBytes []byte, parentAuth []byte, keyAuth []byte, enableEncryption bool, data []byte) ([]byte, error) {
 
 	var irwc io.ReadWriteCloser
 
@@ -70,13 +70,62 @@ func TPMHMAC(tpmPath string, rwc io.ReadWriteCloser, pemkeyBytes []byte, parentA
 		keyAuth = nil
 	}
 
+	esess, esessloser, err := tpm2.HMACSession(rwr, tpm2.TPMAlgSHA256, 16, tpm2.Auth(nil), tpm2.AESEncryption(128, tpm2.EncryptOut))
+
+	if err != nil {
+		return nil, err
+	}
+
+	defer func() {
+		_ = esessloser()
+	}()
+	var createEKRsp *tpm2.CreatePrimaryResponse
+	//var esessloser func() error
+
+	if enableEncryption {
+
+		// for now just load the ek and use it for encryption.
+		// TODO: pass in the hex "name" of the ek to use and compare that to the name derived.
+		//       if they match, continue
+		var err error
+		createEKRsp, err = tpm2.CreatePrimary{
+			PrimaryHandle: tpm2.TPMRHEndorsement,
+			InPublic:      tpm2.New2B(tpm2.RSAEKTemplate),
+		}.Execute(rwr)
+		if err != nil {
+			return nil, err
+		}
+		defer func() {
+			flushContextCmd := tpm2.FlushContext{
+				FlushHandle: createEKRsp.ObjectHandle,
+			}
+			_, _ = flushContextCmd.Execute(rwr)
+		}()
+
+		encryptionPub, err := tpm2.ReadPublic{
+			ObjectHandle: createEKRsp.ObjectHandle,
+		}.Execute(rwr)
+		if err != nil {
+			return nil, err
+		}
+		ePubName, err := encryptionPub.OutPublic.Contents()
+		if err != nil {
+			return nil, err
+		}
+
+		esess, esessloser, err = tpm2.HMACSession(rwr, tpm2.TPMAlgSHA256, 16, tpm2.AESEncryption(128, tpm2.EncryptIn), tpm2.Salted(createEKRsp.ObjectHandle, *ePubName))
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	primaryKey, err := tpm2.CreatePrimary{
 		PrimaryHandle: tpm2.AuthHandle{
 			Handle: key.Parent,
 			Auth:   tpm2.PasswordAuth(parentAuth),
 		},
 		InPublic: tpm2.New2B(keyfile.ECCSRK_H2_Template),
-	}.Execute(rwr)
+	}.Execute(rwr, esess)
 	if err != nil {
 		return nil, err
 	}
@@ -96,7 +145,7 @@ func TPMHMAC(tpmPath string, rwc io.ReadWriteCloser, pemkeyBytes []byte, parentA
 		},
 		InPublic:  key.Pubkey,
 		InPrivate: key.Privkey,
-	}.Execute(rwr)
+	}.Execute(rwr, esess)
 
 	if err != nil {
 		return nil, err
@@ -146,6 +195,13 @@ func TPMHMAC(tpmPath string, rwc io.ReadWriteCloser, pemkeyBytes []byte, parentA
 		_ = sasCloser()
 	}()
 
+	if *&enableEncryption {
+		flushContextCmd := tpm2.FlushContext{
+			FlushHandle: createEKRsp.ObjectHandle,
+		}
+		_, _ = flushContextCmd.Execute(rwr)
+	}
+
 	hmacStart := tpm2.HmacStart{
 		Handle: tpm2.AuthHandle{
 			Handle: hKey.ObjectHandle,
@@ -173,7 +229,7 @@ func TPMHMAC(tpmPath string, rwc io.ReadWriteCloser, pemkeyBytes []byte, parentA
 				Buffer: data[:maxInputBuffer],
 			},
 		}
-		_, err = sequenceUpdate.Execute(rwr)
+		_, err = sequenceUpdate.Execute(rwr, esess)
 		if err != nil {
 			return nil, err
 		}
@@ -189,7 +245,7 @@ func TPMHMAC(tpmPath string, rwc io.ReadWriteCloser, pemkeyBytes []byte, parentA
 		Hierarchy: tpm2.TPMRHOwner,
 	}
 
-	rspSC, err := sequenceComplete.Execute(rwr)
+	rspSC, err := sequenceComplete.Execute(rwr, esess)
 	if err != nil {
 		return nil, err
 	}

@@ -201,7 +201,7 @@ func TestHMAC(t *testing.T) {
 
 	x := []byte("foo")
 
-	f, err := TPMHMAC("", tpmDevice, keyFileBytes.Bytes(), nil, nil, x)
+	f, err := TPMHMAC("", tpmDevice, keyFileBytes.Bytes(), nil, nil, false, x)
 	require.NoError(t, err)
 
 	hmacInstance := hmac.New(sha256.New, k)
