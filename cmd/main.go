@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/canonical/go-kbkdf"
-	tpmkdf "github.com/salrashid123/tpm-kdf"
+	"github.com/hashicorp/vault/sdk/helper/kdf"
+	tkdf "github.com/salrashid123/tpm-kdf/hmac"
 )
 
 var (
@@ -31,11 +31,15 @@ func main() {
 		os.Exit(1)
 	}
 
-	h, err := tpmkdf.TPMKDF(*tpmPath, nil, c, []byte(*parentPass), []byte(*keyPass))
+	prfLen := kdf.HMACSHA256PRFLen
+
+	r, err := kdf.CounterMode(func(key []byte, rdata []byte) ([]byte, error) {
+		return tkdf.TPMHMAC(*tpmPath, nil, c, []byte(*parentPass), []byte(*keyPass), rdata)
+	}, prfLen, nil, []byte(*data), uint32(*length))
 	if err != nil {
-		panic(err)
+		fmt.Fprintf(os.Stderr, "tpm-kdf: Error %v", err)
+		os.Exit(1)
 	}
-	r := kbkdf.CounterModeKey(h, nil, nil, []byte(*data), uint32(*length))
 
 	if *outputBase64 {
 		fmt.Printf("%s", base64.StdEncoding.EncodeToString(r))

@@ -5,7 +5,7 @@ CLI and library which provides a `counter mode KDF` as described in [NIST SP 800
 
 This CLI utilizes an TPM-based HMAC key as a basis to derive the KDF.
 
-Library basically overrides Canonical's  [go-kbkdf](https://github.com/canonical/go-kbkdf)
+Library basically overrides hashicorp's  [Vault's KDF](github.com/hashicorp/vault/sdk/helper/kdf)
 
 ---
 
@@ -27,16 +27,16 @@ The following with derive a key from "foo":
 ```golang
 import (
 	"encoding/hex"
-	kbkdf "github.com/canonical/go-kbkdf"
-	"github.com/canonical/go-kbkdf/hmac_prf"
-	tpmkdf "github.com/salrashid123/tpm-kdf"
+	"github.com/hashicorp/vault/sdk/helper/kdf"
+	tkdf "github.com/salrashid123/tpm-kdf/hmac"
 )
 
 	keyFileBytes, err := os.ReadFile("/path/to/tpm-key.pem")
 	b := []byte("foo")
 
-	h, err := tpmkdf.TPMKDF("/dev/tpmrm0", nil, keyFileBytes, nil, nil)
-	rc := kbkdf.CounterModeKey(h, nil, nil, b, 256)	
+	rc, err := kdf.CounterMode(func(key []byte, data []byte) ([]byte, error) {
+		return tkdf.TPMHMAC("/dev/tpmrm0", nil, keyFileBytes, nil, nil, data)
+	}, prfLen, nil, b, 256)
 
 	fmt.Printf("KDF %s\n", hex.EncodeToString(rc))
 ```
@@ -61,10 +61,12 @@ if you want to manage the TPM read closer externally, set `tpmPath` nil and set 
 	defer func() {
 		rwc.Close()
 	}()
-	h, err := tpmkdf.TPMKDF(nil, rwc, keyFileBytes, nil, nil)
+
 	b := []byte("foo")
 
-	rc := kbkdf.CounterModeKey(h, nil, nil, b, 256)	
+	rc, err := kdf.CounterMode(func(key []byte, data []byte) ([]byte, error) {
+		return tkdf.TPMHMAC("", rwc, keyFileBytes, nil, nil, data)
+	}, prfLen, nil, b, 256)
 
 	fmt.Printf("KDF %s\n", hex.EncodeToString(rc))
 
@@ -147,3 +149,47 @@ go run cmd/main.go  --data=foo \
 THe current release only uses passwordAuth.  
 
 Other policy times can get encoded into the TPM but i'm just waiting for the  specs to finalize.  For now, see [Reconstruct Policy using command parameters](https://github.com/salrashid123/tpm2/tree/master/policy_gen)
+
+
+### Latency
+
+The commit history in this repo used two different KDF librarires:
+
+* `"github.com/canonical/go-kbkdf"`
+* `"github.com/hashicorp/vault/sdk/helper/kdf"`
+
+Both provide KDF based on the NIST counter but it seems the outputs differ.  The canonical library seems to have been verified against the NIST test vectors The current library uses the latter.
+
+I'm unsure what difference each library involves but but the canonical version does incur very, very high latency to the point its unusable. 
+
+Using Vault:
+
+```bash
+$ time ./tpm-kdf --data=foo    --keyFile=/tmp/tpm-key.pem --length=256 
+8ee68b83a24249fd9dcd162921c3f5486f591620a871bedf9efce044d5e74734
+real	0m1.591s
+user	0m0.014s
+sys	0m0.333s
+```
+
+Using canonical:
+
+```bash
+$ time ./tpm-kdf  --data=foo    --keyFile=/tmp/tpm-key.pem --length=256 
+61c0f5564fc25d37100825e3791da6e3e5e09af40a63ac84226cf5dba7bae0f4
+real	0m25.348s
+user	0m0.041s
+sys	0m4.791s
+```
+
+One reason is the canonical version repeatedly call TPMHMAC which itself on a real TPM has some latency:
+
+```bash
+$ time echo -n "foo"  | tpm2_hmac  -g sha256 -c hmac.ctx --hex
+c185995ed605c41cc83df3c2b30f878e0e1e8707ac3b944bd447d20488d3d79e
+real	0m0.950s
+user	0m0.041s
+sys	0m0.037s
+```
+
+The code in this library can be optimized to load the HMAC key chain once and repeatedly reuse that...but for now, this repo uses the Vault's version.

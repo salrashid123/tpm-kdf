@@ -7,14 +7,14 @@ import (
 	"io"
 	"testing"
 
-	"github.com/canonical/go-kbkdf"
-	"github.com/canonical/go-kbkdf/hmac_prf"
 	keyfile "github.com/foxboron/go-tpm-keyfiles"
 	"github.com/google/go-tpm-tools/simulator"
 	"github.com/google/go-tpm/tpm2"
 	"github.com/google/go-tpm/tpm2/transport"
-
+	"github.com/hashicorp/vault/sdk/helper/kdf"
 	"github.com/stretchr/testify/require"
+
+	tkdf "github.com/salrashid123/tpm-kdf/hmac"
 )
 
 var ()
@@ -200,12 +200,19 @@ func TestKDFBasic(t *testing.T) {
 	require.NoError(t, err)
 
 	b := []byte("foo")
-	r := kbkdf.CounterModeKey(hmac_prf.SHA256, k, nil, b, 256)
 
-	h, err := TPMKDF("", tpmDevice, keyFileBytes.Bytes(), nil, nil)
+	prf := kdf.HMACSHA256PRF
+	prfLen := kdf.HMACSHA256PRFLen
+
+	/// Usng Vault; we're doign this just to compare
+	r, err := kdf.CounterMode(prf, prfLen, k, b, 256)
 	require.NoError(t, err)
 
-	rc := kbkdf.CounterModeKey(h, nil, nil, b, 256)
+	////  using TPM
+	rc, err := kdf.CounterMode(func(key []byte, data []byte) ([]byte, error) {
+		return tkdf.TPMHMAC("", tpmDevice, keyFileBytes.Bytes(), nil, nil, data)
+	}, prfLen, nil, b, 256)
+	require.NoError(t, err)
 
 	//t.Logf("Derived Key: %s\n", hex.EncodeToString(rc))
 	require.Equal(t, r, rc)
@@ -226,7 +233,7 @@ func TestKDFKeyAuth(t *testing.T) {
 
 	kf := &keyfile.TPMKey{
 		Keytype:   keyfile.OIDLoadableKey,
-		EmptyAuth: true,
+		EmptyAuth: false,
 		Parent:    tpm2.TPMHandle(tpm2.TPMRHOwner.HandleValue()),
 		Pubkey:    pu,
 		Privkey:   pr,
@@ -238,12 +245,18 @@ func TestKDFKeyAuth(t *testing.T) {
 	require.NoError(t, err)
 
 	b := []byte("foo")
-	r := kbkdf.CounterModeKey(hmac_prf.SHA256, k, nil, b, 256)
 
-	h, err := TPMKDF("", tpmDevice, keyFileBytes.Bytes(), nil, keyPassword)
+	prf := kdf.HMACSHA256PRF
+	prfLen := kdf.HMACSHA256PRFLen
+
+	/// Usng Vault; we're doign this just to compare
+	r, err := kdf.CounterMode(prf, prfLen, k, b, 256)
 	require.NoError(t, err)
 
-	rc := kbkdf.CounterModeKey(h, nil, nil, b, 256)
+	////  using TPM
+	rc, err := kdf.CounterMode(func(key []byte, data []byte) ([]byte, error) {
+		return tkdf.TPMHMAC("", tpmDevice, keyFileBytes.Bytes(), nil, keyPassword, data)
+	}, prfLen, nil, b, 256)
 	require.NoError(t, err)
 
 	require.Equal(t, rc, r)
@@ -287,12 +300,17 @@ func TestKDFParentAuth(t *testing.T) {
 
 	b := []byte("foo")
 
-	r := kbkdf.CounterModeKey(hmac_prf.SHA256, k, nil, b, 256)
+	prf := kdf.HMACSHA256PRF
+	prfLen := kdf.HMACSHA256PRFLen
 
-	h, err := TPMKDF("", tpmDevice, keyFileBytes.Bytes(), parentPassword, nil)
+	/// Usng Vault; we're doign this just to compare
+	r, err := kdf.CounterMode(prf, prfLen, k, b, 256)
 	require.NoError(t, err)
 
-	rc := kbkdf.CounterModeKey(h, nil, nil, b, 256)
+	////  using TPM
+	rc, err := kdf.CounterMode(func(key []byte, data []byte) ([]byte, error) {
+		return tkdf.TPMHMAC("", tpmDevice, keyFileBytes.Bytes(), parentPassword, nil, data)
+	}, prfLen, nil, b, 256)
 	require.NoError(t, err)
 
 	require.Equal(t, rc, r)
