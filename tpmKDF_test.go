@@ -210,7 +210,7 @@ func TestKDFBasic(t *testing.T) {
 
 	////  using TPM
 	rc, err := kdf.CounterMode(func(key []byte, data []byte) ([]byte, error) {
-		return tkdf.TPMHMAC("", tpmDevice, keyFileBytes.Bytes(), nil, nil, false, data)
+		return tkdf.TPMHMAC("", tpmDevice, keyFileBytes.Bytes(), nil, nil, "", data)
 	}, prfLen, nil, b, 256)
 	require.NoError(t, err)
 
@@ -255,7 +255,7 @@ func TestKDFKeyAuth(t *testing.T) {
 
 	////  using TPM
 	rc, err := kdf.CounterMode(func(key []byte, data []byte) ([]byte, error) {
-		return tkdf.TPMHMAC("", tpmDevice, keyFileBytes.Bytes(), nil, keyPassword, false, data)
+		return tkdf.TPMHMAC("", tpmDevice, keyFileBytes.Bytes(), nil, keyPassword, "", data)
 	}, prfLen, nil, b, 256)
 	require.NoError(t, err)
 
@@ -309,7 +309,7 @@ func TestKDFParentAuth(t *testing.T) {
 
 	////  using TPM
 	rc, err := kdf.CounterMode(func(key []byte, data []byte) ([]byte, error) {
-		return tkdf.TPMHMAC("", tpmDevice, keyFileBytes.Bytes(), parentPassword, nil, false, data)
+		return tkdf.TPMHMAC("", tpmDevice, keyFileBytes.Bytes(), parentPassword, nil, "", data)
 	}, prfLen, nil, b, 256)
 	require.NoError(t, err)
 

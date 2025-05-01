@@ -35,7 +35,7 @@ import (
 	b := []byte("foo")
 
 	rc, err := kdf.CounterMode(func(key []byte, data []byte) ([]byte, error) {
-		return tkdf.TPMHMAC("/dev/tpmrm0", nil, keyFileBytes, nil, nil, false, data)
+		return tkdf.TPMHMAC("/dev/tpmrm0", nil, keyFileBytes, nil, nil, "", data)
 	}, prfLen, nil, b, 256)
 
 	fmt.Printf("KDF %s\n", hex.EncodeToString(rc))
@@ -50,7 +50,7 @@ func TPMKDF(
 	pemkeyBytes []byte, 
 	parentAuth []byte, 
 	keyAuth []byte,
-	enableEncryption bool
+	sessionEncryptionName string,
 	data []byte) (*tpmPrf, error) {
 ```
 
@@ -67,7 +67,7 @@ if you want to manage the TPM read closer externally, set `tpmPath` nil and set 
 	b := []byte("foo")
 
 	rc, err := kdf.CounterMode(func(key []byte, data []byte) ([]byte, error) {
-		return tkdf.TPMHMAC("", rwc, keyFileBytes, nil, nil, false, data)
+		return tkdf.TPMHMAC("", rwc, keyFileBytes, nil, nil, "", data)
 	}, prfLen, nil, b, 256)
 
 	fmt.Printf("KDF %s\n", hex.EncodeToString(rc))
@@ -91,7 +91,7 @@ You can get the signed and attested binary on the `Releases` page
 | **`-keyFile`** | Path to the PEM formatted KeyFile |
 | **`-length`** | result size |
 | **`-data`** | data to kdf |
-| **`-enableEncryption`** | enable TPM bus encryption using derived EK|
+| **`-tpm-session-encrypt-with-name`** | hex encoded TPM object 'name' to use with an encrypted session|
 | **`-outputBase64`** | output as base64 |
 
 The `keyFile` parameter here accepts a PEM formatted key as described in [ASN.1 Specification for TPM 2.0 Key Files](https://www.hansenpartnership.com/draft-bottomley-tpm2-keys.html).
@@ -154,13 +154,29 @@ THe current release only uses passwordAuth.
 Other policy times can get encoded into the TPM but i'm just waiting for the  specs to finalize.  For now, see [Reconstruct Policy using command parameters](https://github.com/salrashid123/tpm2/tree/master/policy_gen)
 
 
-### Session Encryption
+### Encrypted TPM Sessions
 
-If you really need session encryption ([CPU to TPM Bus Protection Guidance – Passive Attack Mitigations](https://trustedcomputinggroup.org/wp-content/uploads/TCG_CPU_TPM_Bus_Protection_Guidance_Passive_Attack_Mitigation_8May23-3.pdf)), then simply specify `--enableEncryption=true` flag or enable the flag.
+If you want to enable [TPM Encrypted sessions](https://github.com/salrashid123/tpm2/tree/master/tpm_encrypted_session), you should provide the "name" of a trusted key on the TPM for each call.
+
+A trusted key can be the EK Key. You can get the name using `tpm2_tools`:
+
+```bash
+tpm2_createek -c ekprimary.ctx -G rsa -u ek.pub -Q
+tpm2_readpublic -c ekprimary.ctx -o ek.pem -n name.bin -f pem -Q
+xxd -p -c 100 name.bin 
+  000b84c403b83cdf6472d9e84f87169cac746be95c1182ed61bffd12f18adaea8e63
+```
+
+Then use the hex value returned in the `--tpm-session-encrypt-with-name=` argument.
+
+For example:
+
+```bash
+   --tpm-session-encrypt-with-name=000b84c403b83cdf6472d9e84f87169cac746be95c1182ed61bffd12f18adaea8e63
+```
 
 For example, most TPM calls are encrypted.
 
 ![images/session.png](images/session.png)
 
-By default, the Endorsement Key is recalled dynamically over an _unencrypted channel_ so your're ending up with a chicken-egg issue.  a TODO is for the caller to supply the `name` of the EK Public key so that its compared at runtime.
 

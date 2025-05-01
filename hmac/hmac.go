@@ -2,6 +2,7 @@ package hmac
 
 import (
 	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net"
@@ -37,7 +38,7 @@ const (
 //	parentAuth: TPM passphrase auth for the parent
 //	keyAuth:  TPM passphrase auth for the hmac key
 //	data:  the data to hmac
-func TPMHMAC(tpmPath string, rwc io.ReadWriteCloser, pemkeyBytes []byte, parentAuth []byte, keyAuth []byte, enableEncryption bool, data []byte) ([]byte, error) {
+func TPMHMAC(tpmPath string, rwc io.ReadWriteCloser, pemkeyBytes []byte, parentAuth []byte, keyAuth []byte, sessionEncryptionName string, data []byte) ([]byte, error) {
 
 	var irwc io.ReadWriteCloser
 
@@ -70,37 +71,31 @@ func TPMHMAC(tpmPath string, rwc io.ReadWriteCloser, pemkeyBytes []byte, parentA
 		keyAuth = nil
 	}
 
-	esess, esessloser, err := tpm2.HMACSession(rwr, tpm2.TPMAlgSHA256, 16, tpm2.Auth(nil), tpm2.AESEncryption(128, tpm2.EncryptOut))
+	var esess tpm2.Session
+	var esessloser func() error
 
-	if err != nil {
-		return nil, err
-	}
+	//var createEKRsp *tpm2.CreatePrimaryResponse
 
-	defer func() {
-		_ = esessloser()
-	}()
-	var createEKRsp *tpm2.CreatePrimaryResponse
-	//var esessloser func() error
+	if sessionEncryptionName != "" {
 
-	if enableEncryption {
-
-		// for now just load the ek and use it for encryption.
-		// TODO: pass in the hex "name" of the ek to use and compare that to the name derived.
-		//       if they match, continue
-		var err error
-		createEKRsp, err = tpm2.CreatePrimary{
+		createEKRsp, err := tpm2.CreatePrimary{
 			PrimaryHandle: tpm2.TPMRHEndorsement,
 			InPublic:      tpm2.New2B(tpm2.RSAEKTemplate),
 		}.Execute(rwr)
 		if err != nil {
 			return nil, err
 		}
+
 		defer func() {
 			flushContextCmd := tpm2.FlushContext{
 				FlushHandle: createEKRsp.ObjectHandle,
 			}
 			_, _ = flushContextCmd.Execute(rwr)
 		}()
+
+		if sessionEncryptionName != hex.EncodeToString(createEKRsp.Name.Buffer) {
+			return nil, fmt.Errorf("session encryption name mismatch: got [%s]   expected [%s]", sessionEncryptionName, hex.EncodeToString(createEKRsp.Name.Buffer))
+		}
 
 		encryptionPub, err := tpm2.ReadPublic{
 			ObjectHandle: createEKRsp.ObjectHandle,
@@ -117,7 +112,22 @@ func TPMHMAC(tpmPath string, rwc io.ReadWriteCloser, pemkeyBytes []byte, parentA
 		if err != nil {
 			return nil, err
 		}
+
+		// if sessionEncryptionName != "" {
+		flushContextCmd := tpm2.FlushContext{
+			FlushHandle: createEKRsp.ObjectHandle,
+		}
+		_, _ = flushContextCmd.Execute(rwr)
+		//		}
+	} else {
+		esess, esessloser, err = tpm2.HMACSession(rwr, tpm2.TPMAlgSHA256, 16, tpm2.Auth(nil), tpm2.AESEncryption(128, tpm2.EncryptOut))
+		if err != nil {
+			return nil, err
+		}
 	}
+	defer func() {
+		_ = esessloser()
+	}()
 
 	primaryKey, err := tpm2.CreatePrimary{
 		PrimaryHandle: tpm2.AuthHandle{
@@ -146,7 +156,6 @@ func TPMHMAC(tpmPath string, rwc io.ReadWriteCloser, pemkeyBytes []byte, parentA
 		InPublic:  key.Pubkey,
 		InPrivate: key.Privkey,
 	}.Execute(rwr, esess)
-
 	if err != nil {
 		return nil, err
 	}
@@ -194,13 +203,6 @@ func TPMHMAC(tpmPath string, rwc io.ReadWriteCloser, pemkeyBytes []byte, parentA
 	defer func() {
 		_ = sasCloser()
 	}()
-
-	if *&enableEncryption {
-		flushContextCmd := tpm2.FlushContext{
-			FlushHandle: createEKRsp.ObjectHandle,
-		}
-		_, _ = flushContextCmd.Execute(rwr)
-	}
 
 	hmacStart := tpm2.HmacStart{
 		Handle: tpm2.AuthHandle{
