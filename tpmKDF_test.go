@@ -218,6 +218,62 @@ func TestKDFBasic(t *testing.T) {
 	require.Equal(t, r, rc)
 }
 
+// from https://github.com/hashicorp/vault/blob/main/sdk/helper/kdf/kdf_test.go#L11C1-L49C2
+func TestCounterMode(t *testing.T) {
+
+	tpmDevice, err := simulator.Get()
+	require.NoError(t, err)
+	defer tpmDevice.Close()
+
+	rwr := transport.FromReadWriter(tpmDevice)
+
+	k := []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}
+	_, pu, pr, _, closer, err := loadKey(rwr, k, nil, nil)
+	require.NoError(t, err)
+	closer()
+
+	kf := &keyfile.TPMKey{
+		Keytype:   keyfile.OIDLoadableKey,
+		EmptyAuth: true,
+		Parent:    tpm2.TPMHandle(tpm2.TPMRHOwner.HandleValue()),
+		Pubkey:    pu,
+		Privkey:   pr,
+	}
+	require.NoError(t, err)
+
+	keyFileBytes := new(bytes.Buffer)
+	err = keyfile.Encode(keyFileBytes, kf)
+	require.NoError(t, err)
+
+	context := []byte("the quick brown fox")
+	prfLen := kdf.HMACSHA256PRFLen
+
+	expect256 := []byte{
+		219, 25, 238, 6, 185, 236, 180, 64, 248, 152, 251,
+		153, 79, 5, 141, 222, 66, 200, 66, 143, 40, 3, 101, 221, 206, 163, 102,
+		80, 88, 234, 87, 157,
+	}
+
+	for _, l := range []uint32{128, 256, 384, 1024} {
+		out, err := kdf.CounterMode(func(key []byte, data []byte) ([]byte, error) {
+			return tkdf.TPMHMAC("", tpmDevice, keyFileBytes.Bytes(), nil, nil, "", data)
+		}, prfLen, nil, context, l)
+		require.NoError(t, err)
+
+		if err != nil {
+			t.Fatalf("err: %v", err)
+		}
+
+		if uint32(len(out)*8) != l {
+			t.Fatalf("bad length: %#v", out)
+		}
+
+		if l == 256 && !bytes.Equal(out, expect256) {
+			t.Fatalf("mis-match")
+		}
+	}
+}
+
 func TestKDFKeyAuth(t *testing.T) {
 	tpmDevice, err := simulator.Get()
 	require.NoError(t, err)
