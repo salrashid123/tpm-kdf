@@ -5,10 +5,10 @@ import (
 	"crypto"
 	"crypto/rand"
 	"io"
+	"net"
 	"testing"
 
 	keyfile "github.com/foxboron/go-tpm-keyfiles"
-	"github.com/google/go-tpm-tools/simulator"
 	"github.com/google/go-tpm/tpm2"
 	"github.com/google/go-tpm/tpm2/transport"
 	"github.com/hashicorp/vault/sdk/helper/kdf"
@@ -17,7 +17,9 @@ import (
 	tkdf "github.com/salrashid123/tpm-kdf/hmac"
 )
 
-var ()
+const (
+	swTPMPath = "127.0.0.1:2321"
+)
 
 func loadKey(rwr transport.TPM, hmacSensitive []byte, parentPassword []byte, keyPassword []byte) (tpm2.TPMHandle, tpm2.TPM2BPublic, tpm2.TPM2BPrivate, tpm2.TPM2BName, func(), error) {
 
@@ -175,7 +177,7 @@ func loadKey(rwr transport.TPM, hmacSensitive []byte, parentPassword []byte, key
 }
 
 func TestKDFBasic(t *testing.T) {
-	tpmDevice, err := simulator.Get()
+	tpmDevice, err := net.Dial("tcp", swTPMPath)
 	require.NoError(t, err)
 	defer tpmDevice.Close()
 
@@ -221,7 +223,7 @@ func TestKDFBasic(t *testing.T) {
 // from https://github.com/hashicorp/vault/blob/main/sdk/helper/kdf/kdf_test.go#L11C1-L49C2
 func TestCounterMode(t *testing.T) {
 
-	tpmDevice, err := simulator.Get()
+	tpmDevice, err := net.Dial("tcp", swTPMPath)
 	require.NoError(t, err)
 	defer tpmDevice.Close()
 
@@ -275,7 +277,7 @@ func TestCounterMode(t *testing.T) {
 }
 
 func TestKDFKeyAuth(t *testing.T) {
-	tpmDevice, err := simulator.Get()
+	tpmDevice, err := net.Dial("tcp", swTPMPath)
 	require.NoError(t, err)
 	defer tpmDevice.Close()
 
@@ -319,7 +321,7 @@ func TestKDFKeyAuth(t *testing.T) {
 }
 
 func TestKDFParentAuth(t *testing.T) {
-	tpmDevice, err := simulator.Get()
+	tpmDevice, err := net.Dial("tcp", swTPMPath)
 	require.NoError(t, err)
 	defer tpmDevice.Close()
 

@@ -180,3 +180,18 @@ For example, most TPM calls are encrypted.
 ![images/session.png](images/session.png)
 
 
+### Testing
+
+Using [swtpm](https://github.com/stefanberger/swtpm)
+
+```bash
+rm -rf /tmp/myvtpm && mkdir /tmp/myvtpm
+swtpm_setup --tpmstate /tmp/myvtpm --tpm2 --create-ek-cert
+swtpm socket --tpmstate dir=/tmp/myvtpm --tpm2 --server type=tcp,port=2321 --ctrl type=tcp,port=2322 --flags not-need-init,startup-clear
+
+# then specify "127.0.0.1:2321"  as the TPM device path in the examples
+# and for tpm2_tools, export the following var
+export TPM2TOOLS_TCTI="swtpm:port=2321"
+
+go test -v
+```
