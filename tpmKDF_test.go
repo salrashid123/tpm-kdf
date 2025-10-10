@@ -183,7 +183,7 @@ func TestKDFBasic(t *testing.T) {
 
 	rwr := transport.FromReadWriter(tpmDevice)
 
-	k := []byte("my_api_key")
+	k := []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}
 	_, pu, pr, _, closer, err := loadKey(rwr, k, nil, nil)
 	require.NoError(t, err)
 	closer()
@@ -201,7 +201,7 @@ func TestKDFBasic(t *testing.T) {
 	err = keyfile.Encode(keyFileBytes, kf)
 	require.NoError(t, err)
 
-	b := []byte("foo")
+	b := []byte("the quick brown fox")
 
 	prf := kdf.HMACSHA256PRF
 	prfLen := kdf.HMACSHA256PRFLen
@@ -218,6 +218,14 @@ func TestKDFBasic(t *testing.T) {
 
 	//t.Logf("Derived Key: %s\n", hex.EncodeToString(rc))
 	require.Equal(t, r, rc)
+
+	expect256 := []byte{
+		219, 25, 238, 6, 185, 236, 180, 64, 248, 152, 251,
+		153, 79, 5, 141, 222, 66, 200, 66, 143, 40, 3, 101, 221, 206, 163, 102,
+		80, 88, 234, 87, 157,
+	}
+	require.Equal(t, r, expect256)
+
 }
 
 // from https://github.com/hashicorp/vault/blob/main/sdk/helper/kdf/kdf_test.go#L11C1-L49C2

@@ -4,7 +4,8 @@ go 1.24.0
 
 require (
 	github.com/hashicorp/vault/sdk v0.15.2
-	github.com/salrashid123/tpm-kdf v0.0.0
+	github.com/salrashid123/tpm-kdf v0.0.44
+	//github.com/salrashid123/tpm-kdf v0.0.0
 )
 
 require (
@@ -15,4 +16,4 @@ require (
 	golang.org/x/sys v0.29.0 // indirect
 )
 
-replace github.com/salrashid123/tpm-kdf => ../
+//replace github.com/salrashid123/tpm-kdf => ../

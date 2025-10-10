@@ -22,6 +22,8 @@ github.com/hashicorp/vault/sdk v0.15.2 h1:Rp5Yp4lyBhlWgq24ZVb2n/YN47RKOAvmx/jlMf
 github.com/hashicorp/vault/sdk v0.15.2/go.mod h1:2Wj2tHIgfz0gNWgEPWBbCXFIiPrq96E8FTjPNV9J1Bc=
 github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 h1:Jamvg5psRIccs7FGNTlIRMkT8wgtp5eCXdBlqhYGL6U=
 github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
+github.com/salrashid123/tpm-kdf v0.0.44 h1:ECKA5BftA0M/y7oXJqTK/L88fiF9p8bZMPSqjyFX2x4=
+github.com/salrashid123/tpm-kdf v0.0.44/go.mod h1:liBR795GjjZi4oG/4vPjWlbZ/xejG6BBppBBFeim1sk=
 github.com/stretchr/testify v1.10.0 h1:Xv5erBjTwe/5IxqUQTdXv5kgmIvbHo3QQyRwhJsOfJA=
 github.com/stretchr/testify v1.10.0/go.mod h1:r2ic/lqez/lEtzL7wO/rwa5dbSLXVDPFyf8C91i36aY=
 go.uber.org/multierr v1.11.0 h1:blXXJkSxSSfBVBlC76pxqeO+LN3aDfLQo+309xJstO0=

@@ -103,10 +103,12 @@ You can save a key in PEM format using [tpm2_encodeobject](https://github.com/tp
 The following sets up a sofware TPM but you can ofcourse use the real thing.  
 
 ```bash
-mkdir myvtpm
-sudo swtpm_setup --tpmstate myvtpm --tpm2 --create-ek-cert
+cd example/
 
-sudo swtpm socket --tpmstate dir=myvtpm \
+# mkdir myvtpm
+# swtpm_setup --tpmstate myvtpm --tpm2 --create-ek-cert
+
+swtpm socket --tpmstate dir=myvtpm \
    --tpm2 --server type=tcp,port=2321 --ctrl type=tcp,port=2322 --flags not-need-init,startup-clear --log level=5
 
 export TPM2TOOLS_TCTI="swtpm:port=2321"
@@ -114,19 +116,19 @@ export TPM2TOOLS_TCTI="swtpm:port=2321"
 ### if you wanted to generate a new key, then run the following.
 ###  the example/ folder contains key files with this passphrase.
 
-# export secret="my_api_key"
-# echo -n $secret > hmac.key
-# hexkey=$(xxd -p -c 256 < hmac.key)
-# echo $hexkey
+export secret="my_api_key"
+echo -n $secret > hmac.key
+hexkey=$(xxd -p -c 256 < hmac.key)
+echo $hexkey
 
-# printf '\x00\x00' > unique.dat
-# tpm2_createprimary -C o -G ecc \
-#     -g sha256  -c primary.ctx -a "fixedtpm|fixedparent|sensitivedataorigin|userwithauth|noda|restricted|decrypt" -u unique.dat
+printf '\x00\x00' > unique.dat
+tpm2_createprimary -C o -G ecc \
+    -g sha256  -c primary.ctx -a "fixedtpm|fixedparent|sensitivedataorigin|userwithauth|noda|restricted|decrypt" -u unique.dat
 
-# tpm2_import -C primary.ctx -G hmac -i hmac.key -u hmac.pub -r hmac.priv
-# tpm2_flushcontext -t && tpm2_flushcontext -s && tpm2_flushcontext -l
-# tpm2_load -C primary.ctx -u hmac.pub -r hmac.priv -c hmac.ctx
-# tpm2_encodeobject -C primary.ctx -u hmac.pub -r hmac.priv -o tpm-key.pem
+tpm2_import -C primary.ctx -G hmac -i hmac.key -u hmac.pub -r hmac.priv
+tpm2_flushcontext -t && tpm2_flushcontext -s && tpm2_flushcontext -l
+tpm2_load -C primary.ctx -u hmac.pub -r hmac.priv -c hmac.ctx
+tpm2_encodeobject -C primary.ctx -u hmac.pub -r hmac.priv -o tpm-key.pem
 
 go run cmd/main.go  --data=foo \
    --keyFile=example/certs/tpm-key.pem --length=256 --tpm-path="127.0.0.1:2321"
