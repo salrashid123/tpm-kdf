@@ -5,7 +5,7 @@ CLI and library which provides a `counter mode KDF` as described in [NIST SP 800
 
 This CLI utilizes an TPM-based HMAC key as a basis to derive the KDF.
 
-Library basically overrides [Canonicals KDF](https://github.com/canonical/go-kbkdf) and has been verified against some of the [NIST test vectors](https://csrc.nist.gov/Projects/Cryptographic-Algorithm-Validation-Program/Key-Derivation).
+Library basically overrides [Canonicals KDF](https://github.com/canonical/go-kbkdf) and has been verified against [NIST test vectors](https://csrc.nist.gov/Projects/Cryptographic-Algorithm-Validation-Program/Key-Derivation).
 
 ---
 
