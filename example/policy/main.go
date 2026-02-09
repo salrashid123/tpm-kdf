@@ -11,9 +11,10 @@ import (
 )
 
 var (
-	tpmPath = flag.String("tpm-path", "127.0.0.1:2321", "Path to the TPM device (character device or a Unix socket).")
-	in      = flag.String("in", "certs/tpm-key.pem", "privateKey File")
-	key     = flag.String("key", "my_api_key", "API KEY")
+	tpmPath                   = flag.String("tpm-path", "127.0.0.1:2321", "Path to the TPM device (character device or a Unix socket).")
+	in                        = flag.String("in", "certs_policy/tpm-key.pem", "privateKey File")
+	key                       = flag.String("key", "my_api_key", "API KEY")
+	tpmsessionencryptwithname = flag.String("tpm-session-encrypt-with-name", "", "Session encryption name")
 )
 
 func main() {
@@ -32,7 +33,7 @@ func main() {
 	label := []byte("foo")
 	context := []byte("context")
 
-	prf, err := tpmkdf.NewTPMPRF(*tpmPath, nil, c, nil, nil, "")
+	prf, err := tpmkdf.NewTPMPRF(*tpmPath, nil, c, nil, []byte("testpswd"), *tpmsessionencryptwithname)
 	if err != nil {
 		fmt.Printf("error %v\n", err)
 		return
