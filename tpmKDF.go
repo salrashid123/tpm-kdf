@@ -22,6 +22,7 @@ type tprf struct {
 	tpmPath               string
 	rwc                   io.ReadWriteCloser
 	pemKeyBytes           []byte
+	parentKeyType         tpmpolicy.KeyType
 	parentAuth            []byte
 	AuthSession           tpmpolicy.Session // If the key needs a session, supply one as the `tpmkdf.Session`
 	sessionEncryptionName string
@@ -41,7 +42,7 @@ func (p tprf) Size() uint32 {
 }
 
 func (p tprf) Run(s, x []byte) ([]byte, error) {
-	f, err := tpmhmac.TPMHMAC(p.tpmPath, p.rwc, p.pemKeyBytes, p.parentAuth, p.AuthSession, p.sessionEncryptionName, x)
+	f, err := tpmhmac.TPMHMAC(p.tpmPath, p.rwc, p.pemKeyBytes, p.parentKeyType, p.parentAuth, p.AuthSession, p.sessionEncryptionName, x)
 	if err != nil {
 		return nil, err
 	}
@@ -49,7 +50,7 @@ func (p tprf) Run(s, x []byte) ([]byte, error) {
 }
 
 // From creates a PRF from the supplied digest algorithm.
-func NewTPMPRF(tpmPath string, rwc io.ReadWriteCloser, pemkeyBytes []byte, parentAuth []byte, session tpmpolicy.Session, sessionEncryptionName string) (PRF, error) {
+func NewTPMPRF(tpmPath string, rwc io.ReadWriteCloser, pemkeyBytes []byte, parentKeyType tpmpolicy.KeyType, parentAuth []byte, session tpmpolicy.Session, sessionEncryptionName string) (PRF, error) {
 
 	key, err := keyfile.Decode(pemkeyBytes)
 	if err != nil {
@@ -80,7 +81,7 @@ func NewTPMPRF(tpmPath string, rwc io.ReadWriteCloser, pemkeyBytes []byte, paren
 	default:
 		return nil, fmt.Errorf("unsupported key type %v", pubid.Type)
 	}
-	return tprf{tpmPath, rwc, pemkeyBytes, parentAuth, session, sessionEncryptionName, h}, nil
+	return tprf{tpmPath, rwc, pemkeyBytes, parentKeyType, parentAuth, session, sessionEncryptionName, h}, nil
 }
 
 func fixedBytes(label, context []byte, bitLength uint32) []byte {

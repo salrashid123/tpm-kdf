@@ -24,7 +24,7 @@ const (
 //	parentAuth: TPM passphrase auth for the parent
 //	keyAuth:  TPM passphrase auth for the hmac key
 //	data:  the data to hmac
-func TPMHMAC(tpmPath string, rwc io.ReadWriteCloser, pemkeyBytes []byte, parentAuth []byte, session tpmpolicy.Session, sessionEncryptionName string, data []byte) ([]byte, error) {
+func TPMHMAC(tpmPath string, rwc io.ReadWriteCloser, pemkeyBytes []byte, parentKeyType tpmpolicy.KeyType, parentAuth []byte, session tpmpolicy.Session, sessionEncryptionName string, data []byte) ([]byte, error) {
 
 	var irwc io.ReadWriteCloser
 
@@ -54,11 +54,10 @@ func TPMHMAC(tpmPath string, rwc io.ReadWriteCloser, pemkeyBytes []byte, parentA
 	var esessloser func() error
 
 	//create a default rsaek key for session encryption
-	createEKCmd := tpm2.CreatePrimary{
+	createEKRsp, err := tpm2.CreatePrimary{
 		PrimaryHandle: tpm2.TPMRHEndorsement,
 		InPublic:      tpm2.New2B(tpm2.RSAEKTemplate),
-	}
-	createEKRsp, err := createEKCmd.Execute(rwr)
+	}.Execute(rwr)
 	if err != nil {
 		return nil, fmt.Errorf("an't acquire acquire rsaek %v", err)
 	}
@@ -100,49 +99,82 @@ func TPMHMAC(tpmPath string, rwc io.ReadWriteCloser, pemkeyBytes []byte, parentA
 		_ = esessloser()
 	}()
 
-	primaryKey, err := tpm2.CreatePrimary{
-		PrimaryHandle: tpm2.AuthHandle{
-			Handle: key.Parent,
-			Auth:   tpm2.PasswordAuth(nil),
-		},
-		InPublic: tpm2.New2B(keyfile.ECCSRK_H2_Template),
-		InSensitive: tpm2.TPM2BSensitiveCreate{
-			Sensitive: &tpm2.TPMSSensitiveCreate{
-				UserAuth: tpm2.TPM2BAuth{
-					Buffer: parentAuth,
+	var hKey *tpm2.LoadResponse
+	switch parentKeyType {
+	case tpmpolicy.RSA_EK: //, tpmpolicy.ECC_EK:
+
+		load_session, load_session_cleanup, err := tpm2.PolicySession(rwr, tpm2.TPMAlgSHA256, 16)
+		if err != nil {
+			return nil, err
+		}
+		defer load_session_cleanup()
+
+		_, err = tpm2.PolicySecret{
+			AuthHandle: tpm2.AuthHandle{
+				Handle: tpm2.TPMRHEndorsement,
+				Name:   tpm2.HandleName(tpm2.TPMRHEndorsement),
+				Auth:   tpm2.PasswordAuth(parentAuth),
+			},
+			PolicySession: load_session.Handle(),
+			NonceTPM:      load_session.NonceTPM(),
+		}.Execute(rwr)
+		if err != nil {
+			return nil, err
+		}
+
+		hKey, err = tpm2.Load{
+			ParentHandle: tpm2.AuthHandle{
+				Handle: createEKRsp.ObjectHandle,
+				Name:   tpm2.TPM2BName(createEKRsp.Name),
+				Auth:   load_session,
+			},
+			InPublic:  key.Pubkey,
+			InPrivate: key.Privkey,
+		}.Execute(rwr, esess)
+		if err != nil {
+			return nil, err
+		}
+
+	case tpmpolicy.H2:
+		primaryKey, err := tpm2.CreatePrimary{
+			PrimaryHandle: tpm2.AuthHandle{
+				Handle: key.Parent,
+				Auth:   tpm2.PasswordAuth(nil),
+			},
+			InPublic: tpm2.New2B(keyfile.ECCSRK_H2_Template),
+			InSensitive: tpm2.TPM2BSensitiveCreate{
+				Sensitive: &tpm2.TPMSSensitiveCreate{
+					UserAuth: tpm2.TPM2BAuth{
+						Buffer: parentAuth,
+					},
 				},
 			},
-		},
-	}.Execute(rwr, esess)
-	if err != nil {
-		return nil, err
-	}
-
-	defer func() {
-		flushContextCmd := tpm2.FlushContext{
-			FlushHandle: primaryKey.ObjectHandle,
+		}.Execute(rwr, esess)
+		if err != nil {
+			return nil, err
 		}
-		_, _ = flushContextCmd.Execute(rwr)
-	}()
 
-	hKey, err := tpm2.Load{
-		ParentHandle: tpm2.AuthHandle{
-			Handle: primaryKey.ObjectHandle,
-			Name:   tpm2.TPM2BName(primaryKey.Name),
-			Auth:   tpm2.PasswordAuth(parentAuth),
-		},
-		InPublic:  key.Pubkey,
-		InPrivate: key.Privkey,
-	}.Execute(rwr, esess)
-	if err != nil {
-		return nil, err
+		defer func() {
+			flushContextCmd := tpm2.FlushContext{
+				FlushHandle: primaryKey.ObjectHandle,
+			}
+			_, _ = flushContextCmd.Execute(rwr)
+		}()
+		hKey, err = tpm2.Load{
+			ParentHandle: tpm2.AuthHandle{
+				Handle: primaryKey.ObjectHandle,
+				Name:   tpm2.TPM2BName(primaryKey.Name),
+				Auth:   tpm2.PasswordAuth(parentAuth),
+			},
+			InPublic:  key.Pubkey,
+			InPrivate: key.Privkey,
+		}.Execute(rwr, esess)
+		if err != nil {
+			return nil, err
+		}
+	default:
+		return nil, fmt.Errorf("unknown parentKey %v", parentKeyType)
 	}
-
-	// flush the primary; its no longer needed
-	flushContextCmd := tpm2.FlushContext{
-		FlushHandle: primaryKey.ObjectHandle,
-	}
-	_, _ = flushContextCmd.Execute(rwr)
 
 	defer func() {
 		flushContextCmd := tpm2.FlushContext{
@@ -161,10 +193,10 @@ func TPMHMAC(tpmPath string, rwc io.ReadWriteCloser, pemkeyBytes []byte, parentA
 	objAuth := &tpm2.TPM2BAuth{
 		Buffer: randomBytes,
 	}
-
 	var sas tpm2.Session
 	var sasCloser func() error
 	if session != nil {
+
 		sas, sasCloser, err = session.GetSession()
 		if err != nil {
 			return nil, err
@@ -174,9 +206,14 @@ func TPMHMAC(tpmPath string, rwc io.ReadWriteCloser, pemkeyBytes []byte, parentA
 		if err != nil {
 			return nil, err
 		}
+
 	}
 	defer sasCloser()
-
+	// flush the primary; its no longer needed
+	flushContextCmd := tpm2.FlushContext{
+		FlushHandle: createEKRsp.ObjectHandle,
+	}
+	_, _ = flushContextCmd.Execute(rwr)
 	hmacStart := tpm2.HmacStart{
 		Handle: tpm2.AuthHandle{
 			Handle: hKey.ObjectHandle,

@@ -17,14 +17,17 @@ import (
 
 var (
 	tpmPath                   = flag.String("tpm-path", "127.0.0.1:2321", "Path to the TPM device (character device or a Unix socket).")
-	in                        = flag.String("in", "certs_policy_pcr/tpm-key.pem", "privateKey File")
+	in                        = flag.String("in", "certs_ek/tpm-key.pem", "privateKey File")
 	key                       = flag.String("key", "my_api_key", "API KEY")
-	pcr                       = flag.Int("pcr", 23, "PCR value")
+	password                  = flag.String("password", "bar", "key password")
 	tpmsessionencryptwithname = flag.String("tpm-session-encrypt-with-name", "", "Session encryption name")
 )
 
 func main() {
+	os.Exit(run()) // since defer func() needs to get called first
+}
 
+func run() int {
 	flag.Parse()
 
 	keyLengthBits := uint32(256)
@@ -33,39 +36,51 @@ func main() {
 	c, err := os.ReadFile(*in)
 	if err != nil {
 		fmt.Printf("error %v\n", err)
-		return
+		return 1
 	}
 
 	rwc, err := tpmutil.OpenTPM(*tpmPath)
 	if err != nil {
-		log.Fatalf("can't open TPM %q: %v", *tpmPath, err)
+		fmt.Printf("can't open TPM %q: %v", *tpmPath, err)
+		return 1
 	}
 	defer func() {
 		if err := rwc.Close(); err != nil {
-			log.Fatalf("can't close TPM %q: %v", *tpmPath, err)
+			fmt.Printf("can't close TPM %q: %v", *tpmPath, err)
 		}
 	}()
 
 	rwr := transport.FromReadWriter(rwc)
 
-	p, err := tpmkdfpolicy.NewPCRSession(rwr, []tpm2.TPMSPCRSelection{
-		{
-			Hash:      tpm2.TPMAlgSHA256,
-			PCRSelect: tpm2.PCClientCompatible.PCRs(uint(*pcr)),
-		},
-	}, tpm2.TPM2BDigest{}, 0)
+	primaryKey, err := tpm2.CreatePrimary{
+		PrimaryHandle: tpm2.TPMRHEndorsement,
+		InPublic:      tpm2.New2B(tpm2.RSAEKTemplate),
+	}.Execute(rwr)
 	if err != nil {
-		log.Printf("ERROR:  could not get MarshalPKIXPublicKey: %v", err)
-		return
+		fmt.Println(err)
+		return 1
+	}
+
+	defer func() {
+		flushContextCmd := tpm2.FlushContext{
+			FlushHandle: primaryKey.ObjectHandle,
+		}
+		_, _ = flushContextCmd.Execute(rwr)
+	}()
+
+	p, err := tpmkdfpolicy.NewPolicyAuthValueAndDuplicateSelectSession(rwr, []byte(*password), primaryKey.Name, primaryKey.ObjectHandle)
+	if err != nil {
+		log.Printf("ERROR:  could not get NewPolicyAuthValueAndDuplicateSelectSession: %v", err)
+		return 1
 	}
 
 	label := []byte("foo")
 	context := []byte("context")
 
-	prf, err := tpmkdf.NewTPMPRF("", rwc, c, tpmkdfpolicy.H2, nil, p, *tpmsessionencryptwithname)
+	prf, err := tpmkdf.NewTPMPRF("", rwc, c, tpmkdfpolicy.RSA_EK, nil, p, *tpmsessionencryptwithname)
 	if err != nil {
-		fmt.Printf("error %v\n", err)
-		return
+		fmt.Printf("error PRF %v\n", err)
+		return 1
 	}
 	// Derive the key using the Counter Mode KDF
 	derivedKey, err := tpmkdf.CounterModeKey(
@@ -76,10 +91,10 @@ func main() {
 		keyLengthBits, // Desired key length in bits
 	)
 	if err != nil {
-		fmt.Printf("error %v\n", err)
-		return
+		fmt.Printf("error getting KDF %v\n", err)
+		return 1
 	}
 
 	fmt.Printf("Derived Key (%d bytes): %x\n", len(derivedKey), derivedKey)
-
+	return 0
 }

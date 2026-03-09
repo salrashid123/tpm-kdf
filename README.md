@@ -20,11 +20,13 @@ Library basically overrides [Canonicals KDF](https://github.com/canonical/go-kbk
 
 ### Parent Key
 
-Currently, only the parent key represented by the [H2 Template](https://trustedcomputinggroup.org/wp-content/uploads/TCG_IWG_EKCredentialProfile_v2p4_r2_10feb2021.pdf) is supported.  This was done for compatibility with openssl (which by default only supports the `h2`)
+By default, parent key represented by the [H2 Template](https://trustedcomputinggroup.org/wp-content/uploads/TCG_IWG_EKCredentialProfile_v2p4_r2_10feb2021.pdf).
+
+ This was done for compatibility with openssl (which by default only supports the `h2`)
 
 The H2 template is also what is specified in [ASN.1 Specification for TPM 2.0 Key Files](https://www.hansenpartnership.com/draft-bottomley-tpm2-keys.html#name-parent)
 
-Its possible to support other parent key types (`rsa_ek`, `ecc_ek`, `rsa_srk`, `ecc_srk`) but H2 is the easiest.  If you need other parent types, pls create an issue in github..
+This utility also supports other parent key types (`rsa_ek`, `ecc_ek`, `rsa_srk`, `ecc_srk`) but H2 is the easiest.  If you need other parent types, please see the sections below.
 
 The following shows an example of creating the `h2 parent` and then an HMAC key on the TPM 
 
@@ -70,7 +72,7 @@ import (
 	label := []byte("foo")
 	context := []byte("context")
 
-	prf, err := tpmkdf.NewTPMPRF("/dev/tpmrm0", nil, keyFileBytes, nil, nil, "")
+	prf, err := tpmkdf.NewTPMPRF("/dev/tpmrm0", nil, keyFileBytes, tpmkdfpolicy.H2, nil, nil, "")
 
 	// Derive the key using the Counter Mode KDF
 	derivedKey, err := tpmkdf.CounterModeKey(
@@ -93,7 +95,7 @@ if you want to manage the TPM read closer externally, set `tpmPath` nil and set 
 
 	keyFileBytes, err := os.ReadFile("/path/to/tpm-key.pem")
 
-	prf, err := tpmkdf.NewTPMPRF(nil, rwc, keyFileBytes, nil, nil, "")
+	prf, err := tpmkdf.NewTPMPRF(nil, rwc, keyFileBytes, tpmkdfpolicy.H2, nil, nil, "")
 
 	// Derive the key using the Counter Mode KDF
 	derivedKey, err := tpmkdf.CounterModeKey(
@@ -125,6 +127,7 @@ You can get the signed and attested binary on the `Releases` page
 | **`-length`** | result size |
 | **`-label`** | kdf label |
 | **`-context`** | kdf context |
+| **`-parentKeyType`** | Parent type (`rsa_ek`, `ecc_ek`, `h2`;  default: `h2`) |
 | **`-keyPass`** | Passphrase for the key handle  |
 | **`-parentPass`** | Passphrase for the owner handle |
 | **`-pcrValues`** | PCR Bound slot:value (increasing order, comma separated) |
@@ -248,6 +251,48 @@ go run policy_pcr/main.go -in certs_policy_pcr/tpm-key.pem --pcr=23 --tpm-path="
 
 Other policy times can get encoded into the TPM but i'm just waiting for the  specs to finalize.  For now, see [Reconstruct Policy using command parameters](https://github.com/salrashid123/tpm2/tree/master/policy_gen)
 
+### Using EK Parent
+
+You can also transfer a file from one TPM to another using duplicate select.
+
+If you use this, the parent can be an `EK_RSA` and the key itself with pcr and password policies.
+
+Basically, the key can be bound using 
+
+* [https://github.com/salrashid123/tpmcopy](https://github.com/salrashid123/tpmcopy)
+
+
+For example, 
+
+```bash
+wget https://github.com/salrashid123/tpmcopy/releases/download/v0.5.2/tpmcopy_0.5.2_linux_amd64
+
+tpm2_createek -c primaryB.ctx -G rsa -u ekB.pub -Q
+tpm2_readpublic -c primaryB.ctx -o ekpubB.pem -f PEM -Q
+
+### TPM-B "/dev/tpmrm0"
+export TPMB="127.0.0.1:2321"
+
+./tpmcopy_0.5.2_linux_amd64 --mode publickey --parentKeyType=rsa_ek -tpmPublicKeyFile=public.pem --tpm-path=$TPMB
+
+echo -n "my_api_key" > hmac.key
+hexkey=$(xxd -p -c 256 < hmac.key)
+./tpmcopy_0.5.2_linux_amd64 --mode duplicate --keyType=hmac --hashScheme=sha256 --secret=hmac.key \
+   --password=bar -tpmPublicKeyFile=public.pem -out=out.json
+
+./tpmcopy_0.5.2_linux_amd64 --mode import --parentKeyType=rsa_ek --in=out.json --out=tpm-key.pem  --tpm-path=$TPMB
+
+### via cli
+
+./tpm-kdf  --label=foo  \
+   --keyFile=example/certs_ek/tpm-key.pem --parentKeyType=rsa_ek --keyPass=bar \
+    --length=256 --tpm-path="127.0.0.1:2321"
+
+### via library
+
+go run policy_duplicate/main.go --in="certs_ek/tpm-key.pem" \
+   --password=bar --tpm-path= "127.0.0.1:2321"
+```
 
 ### Encrypted TPM Sessions
 

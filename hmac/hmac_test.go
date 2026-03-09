@@ -7,17 +7,22 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"io"
+	"net"
 	"testing"
 
 	keyfile "github.com/foxboron/go-tpm-keyfiles"
-	"github.com/google/go-tpm-tools/simulator"
 	"github.com/google/go-tpm/tpm2"
 	"github.com/google/go-tpm/tpm2/transport"
+	tpmpolicy "github.com/salrashid123/tpm-kdf/policy"
 
 	"github.com/stretchr/testify/require"
 )
 
 var ()
+
+const (
+	swTPMPath = "127.0.0.1:2321"
+)
 
 func loadKey(rwr transport.TPM, hmacSensitive []byte, parentPassword []byte, keyPassword []byte) (tpm2.TPMHandle, tpm2.TPM2BPublic, tpm2.TPM2BPrivate, tpm2.TPM2BName, func(), error) {
 
@@ -175,7 +180,7 @@ func loadKey(rwr transport.TPM, hmacSensitive []byte, parentPassword []byte, key
 }
 
 func TestHMAC(t *testing.T) {
-	tpmDevice, err := simulator.Get()
+	tpmDevice, err := net.Dial("tcp", swTPMPath)
 	require.NoError(t, err)
 	defer tpmDevice.Close()
 
@@ -201,7 +206,7 @@ func TestHMAC(t *testing.T) {
 
 	x := []byte("foo")
 
-	f, err := TPMHMAC("", tpmDevice, keyFileBytes.Bytes(), nil, nil, "", x)
+	f, err := TPMHMAC("", tpmDevice, keyFileBytes.Bytes(), tpmpolicy.H2, nil, nil, "", x)
 	require.NoError(t, err)
 
 	hmacInstance := hmac.New(sha256.New, k)

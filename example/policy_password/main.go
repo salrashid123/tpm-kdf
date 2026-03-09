@@ -56,7 +56,7 @@ func main() {
 	label := []byte("foo")
 	context := []byte("context")
 
-	prf, err := tpmkdf.NewTPMPRF("", rwc, c, nil, p, *tpmsessionencryptwithname)
+	prf, err := tpmkdf.NewTPMPRF("", rwc, c, tpmkdfpolicy.H2, nil, p, *tpmsessionencryptwithname)
 	if err != nil {
 		fmt.Printf("error %v\n", err)
 		return

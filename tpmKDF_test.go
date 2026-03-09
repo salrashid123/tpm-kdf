@@ -243,7 +243,7 @@ func TestKDFBasic(t *testing.T) {
 	err = keyfile.Encode(keyFileBytes, kf)
 	require.NoError(t, err)
 
-	prf, err := NewTPMPRF("", tpmDevice, keyFileBytes.Bytes(), nil, nil, "")
+	prf, err := NewTPMPRF("", tpmDevice, keyFileBytes.Bytes(), tpmpolicy.H2, nil, nil, "")
 	require.NoError(t, err)
 
 	// Derive the key using the Counter Mode KDF
@@ -310,7 +310,7 @@ func TestNISTVector(t *testing.T) {
 	err = keyfile.Encode(keyFileBytes, kf)
 	require.NoError(t, err)
 
-	prf, err := NewTPMPRF("", tpmDevice, keyFileBytes.Bytes(), nil, nil, "")
+	prf, err := NewTPMPRF("", tpmDevice, keyFileBytes.Bytes(), tpmpolicy.H2, nil, nil, "")
 	require.NoError(t, err)
 
 	derivedKey, err := counterModeKeyInternal(prf, masterSecret, fixed, 128)
@@ -363,7 +363,7 @@ func TestKDFKeyAuth(t *testing.T) {
 	p, err := tpmpolicy.NewPasswordAuthSession(rwr, keyPassword, 0)
 	require.NoError(t, err)
 
-	prf, err := NewTPMPRF("", tpmDevice, keyFileBytes.Bytes(), nil, p, "")
+	prf, err := NewTPMPRF("", tpmDevice, keyFileBytes.Bytes(), tpmpolicy.H2, nil, p, "")
 	require.NoError(t, err)
 
 	// Derive the key using the Counter Mode KDF
@@ -405,7 +405,7 @@ func TestKDFParentAuth(t *testing.T) {
 	err = keyfile.Encode(keyFileBytes, kf)
 	require.NoError(t, err)
 
-	prf, err := NewTPMPRF("", tpmDevice, keyFileBytes.Bytes(), parentPassword, nil, "")
+	prf, err := NewTPMPRF("", tpmDevice, keyFileBytes.Bytes(), tpmpolicy.H2, parentPassword, nil, "")
 	require.NoError(t, err)
 
 	label := []byte("foo")

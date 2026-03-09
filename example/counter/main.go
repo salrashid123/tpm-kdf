@@ -8,6 +8,7 @@ import (
 	_ "crypto/sha256"
 
 	tpmkdf "github.com/salrashid123/tpm-kdf"
+	tpmkdfpolicy "github.com/salrashid123/tpm-kdf/policy"
 )
 
 var (
@@ -32,7 +33,7 @@ func main() {
 	label := []byte("foo")
 	context := []byte("context")
 
-	prf, err := tpmkdf.NewTPMPRF(*tpmPath, nil, c, nil, nil, "")
+	prf, err := tpmkdf.NewTPMPRF(*tpmPath, nil, c, tpmkdfpolicy.H2, nil, nil, "")
 	if err != nil {
 		fmt.Printf("error %v\n", err)
 		return

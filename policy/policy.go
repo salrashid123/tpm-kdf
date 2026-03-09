@@ -13,6 +13,16 @@ import (
 	"github.com/google/go-tpm/tpm2/transport"
 )
 
+type KeyType int
+
+const (
+	RSA_EK KeyType = iota
+	ECC_EK
+	RSA_SRK
+	ECC_SRK
+	H2
+)
+
 type Session interface {
 	GetSession() (auth tpm2.Session, closer func() error, err error) // this supplies the session handle to the library
 }

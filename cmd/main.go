@@ -25,6 +25,7 @@ var (
 	pcrValues             = flag.String("pcrValues", "", "SHA256 PCR Values to seal against 16:abc,23:foo")
 	label                 = flag.String("label", "foo", "source data label (this the label)")
 	context               = flag.String("context", "context", "source context derive data (this is the context)")
+	parentKeyType         = flag.String("parentKeyType", "h2", "Type of the parent key (rsa_ek, ecc_ek, h2)")
 	length                = flag.Int("length", 256, "Lenth of derived key")
 	keyFile               = flag.String("keyFile", "example/certs/tpm-key.pem", "PEM HMAC Key")
 	sessionEncryptionName = flag.String("tpm-session-encrypt-with-name", "", "hex encoded TPM object 'name' to use with an encrypted session")
@@ -68,42 +69,77 @@ func run() int {
 
 	rwr := transport.FromReadWriter(rwc)
 	var p tpmkdfpolicy.Session
-	if *keyPass != "" {
-		//rwr := transport.FromReadWriter(rwc)
-		p, err = tpmkdfpolicy.NewPasswordAuthSession(rwr, []byte(*keyPass), 0)
+
+	if *parentKeyType == "h2" {
+		if *keyPass != "" {
+			//rwr := transport.FromReadWriter(rwc)
+			p, err = tpmkdfpolicy.NewPasswordAuthSession(rwr, []byte(*keyPass), 0)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "tpm-kdf:   could not get NewPasswordAuthSession: %v", err)
+				return 1
+			}
+		} else if *pcrValues != "" {
+
+			// get the specified pcrs
+
+			_, pcrList, _, err := tpmkdfpolicy.GetPCRMap(tpm2.TPMAlgSHA256, *pcrValues)
+
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "tpm-kdf:  Could not get PCRMap: %s", err)
+				return 1
+			}
+
+			p, err = tpmkdfpolicy.NewPCRSession(rwr, []tpm2.TPMSPCRSelection{
+				{
+					Hash:      tpm2.TPMAlgSHA256,
+					PCRSelect: tpm2.PCClientCompatible.PCRs(pcrList...),
+				},
+			}, tpm2.TPM2BDigest{}, 0)
+
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "tpm-kdf:  Could not get PCRMap: %s", err)
+				return 1
+			}
+		}
+	} else if *parentKeyType == "rsa_ek" {
+		primaryKey, err := tpm2.CreatePrimary{
+			PrimaryHandle: tpm2.TPMRHEndorsement,
+			InPublic:      tpm2.New2B(tpm2.RSAEKTemplate),
+		}.Execute(rwr)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "tpm-kdf:   could not get NewPasswordAuthSession: %v", err)
+			fmt.Println(err)
 			return 1
 		}
-	} else if *pcrValues != "" {
 
-		// get the specified pcrs
+		defer func() {
+			flushContextCmd := tpm2.FlushContext{
+				FlushHandle: primaryKey.ObjectHandle,
+			}
+			_, _ = flushContextCmd.Execute(rwr)
+		}()
 
-		_, pcrList, _, err := tpmkdfpolicy.GetPCRMap(tpm2.TPMAlgSHA256, *pcrValues)
-
+		p, err = tpmkdfpolicy.NewPolicyAuthValueAndDuplicateSelectSession(rwr, []byte(*keyPass), primaryKey.Name, primaryKey.ObjectHandle)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "tpm-kdf:  Could not get PCRMap: %s", err)
 			return 1
 		}
-
-		p, err = tpmkdfpolicy.NewPCRSession(rwr, []tpm2.TPMSPCRSelection{
-			{
-				Hash:      tpm2.TPMAlgSHA256,
-				PCRSelect: tpm2.PCClientCompatible.PCRs(pcrList...),
-			},
-		}, tpm2.TPM2BDigest{}, 0)
-
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "tpm-kdf:  Could not get PCRMap: %s", err)
-			return 1
-		}
-
-	}
-
-	prf, err := tpmkdf.NewTPMPRF("", rwc, c, []byte(*parentPass), p, *sessionEncryptionName)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "tpm-kdf:  %v\n", err)
+	} else {
+		fmt.Fprintf(os.Stderr, "tpm-kdf:  unsupported parentkey: %s", *parentKeyType)
 		return 1
+	}
+	var prf tpmkdf.PRF
+	if *parentKeyType == "rsa_ek" {
+		prf, err = tpmkdf.NewTPMPRF("", rwc, c, tpmkdfpolicy.RSA_EK, []byte(*parentPass), p, *sessionEncryptionName)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "tpm-kdf:  %v\n", err)
+			return 1
+		}
+	} else {
+		prf, err = tpmkdf.NewTPMPRF("", rwc, c, tpmkdfpolicy.H2, []byte(*parentPass), p, *sessionEncryptionName)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "tpm-kdf:  %v\n", err)
+			return 1
+		}
 	}
 
 	// Derive the key using the Counter Mode KDF
