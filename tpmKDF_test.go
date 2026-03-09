@@ -14,7 +14,7 @@ import (
 	keyfile "github.com/foxboron/go-tpm-keyfiles"
 	"github.com/google/go-tpm/tpm2"
 	"github.com/google/go-tpm/tpm2/transport"
-
+	tpmpolicy "github.com/salrashid123/tpm-kdf/policy"
 	"github.com/stretchr/testify/require"
 )
 
@@ -360,7 +360,10 @@ func TestKDFKeyAuth(t *testing.T) {
 		keyLengthBits,       // Desired key length in bits
 	)
 
-	prf, err := NewTPMPRF("", tpmDevice, keyFileBytes.Bytes(), nil, keyPassword, "")
+	p, err := tpmpolicy.NewPasswordAuthSession(rwr, keyPassword, 0)
+	require.NoError(t, err)
+
+	prf, err := NewTPMPRF("", tpmDevice, keyFileBytes.Bytes(), nil, p, "")
 	require.NoError(t, err)
 
 	// Derive the key using the Counter Mode KDF

@@ -3,17 +3,23 @@ package main
 import (
 	"flag"
 	"fmt"
+	"log"
 	"os"
 
 	_ "crypto/sha256"
 
+	"github.com/google/go-tpm/tpm2"
+	"github.com/google/go-tpm/tpm2/transport"
 	tpmkdf "github.com/salrashid123/tpm-kdf"
+	tpmkdfpolicy "github.com/salrashid123/tpm-kdf/policy"
+	tpmutil "github.com/salrashid123/tpm-kdf/util"
 )
 
 var (
 	tpmPath                   = flag.String("tpm-path", "127.0.0.1:2321", "Path to the TPM device (character device or a Unix socket).")
 	in                        = flag.String("in", "certs_policy/tpm-key.pem", "privateKey File")
 	key                       = flag.String("key", "my_api_key", "API KEY")
+	pcr                       = flag.Int("pcr", 23, "PCR value")
 	tpmsessionencryptwithname = flag.String("tpm-session-encrypt-with-name", "", "Session encryption name")
 )
 
@@ -30,10 +36,33 @@ func main() {
 		return
 	}
 
+	rwc, err := tpmutil.OpenTPM(*tpmPath)
+	if err != nil {
+		log.Fatalf("can't open TPM %q: %v", *tpmPath, err)
+	}
+	defer func() {
+		if err := rwc.Close(); err != nil {
+			log.Fatalf("can't close TPM %q: %v", *tpmPath, err)
+		}
+	}()
+
+	rwr := transport.FromReadWriter(rwc)
+
+	p, err := tpmkdfpolicy.NewPCRSession(rwr, []tpm2.TPMSPCRSelection{
+		{
+			Hash:      tpm2.TPMAlgSHA256,
+			PCRSelect: tpm2.PCClientCompatible.PCRs(uint(*pcr)),
+		},
+	}, tpm2.TPM2BDigest{}, 0)
+	if err != nil {
+		log.Printf("ERROR:  could not get MarshalPKIXPublicKey: %v", err)
+		return
+	}
+
 	label := []byte("foo")
 	context := []byte("context")
 
-	prf, err := tpmkdf.NewTPMPRF(*tpmPath, nil, c, nil, []byte("testpswd"), *tpmsessionencryptwithname)
+	prf, err := tpmkdf.NewTPMPRF("", rwc, c, nil, p, *tpmsessionencryptwithname)
 	if err != nil {
 		fmt.Printf("error %v\n", err)
 		return

@@ -5,27 +5,13 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
-	"net"
-	"slices"
 
 	keyfile "github.com/foxboron/go-tpm-keyfiles"
-	"github.com/google/go-tpm-tools/simulator"
 	"github.com/google/go-tpm/tpm2"
 	"github.com/google/go-tpm/tpm2/transport"
-	"github.com/google/go-tpm/tpmutil"
+	tpmpolicy "github.com/salrashid123/tpm-kdf/policy"
+	tpmutil "github.com/salrashid123/tpm-kdf/util"
 )
-
-var TPMDEVICES = []string{"/dev/tpm0", "/dev/tpmrm0"}
-
-func OpenTPM(path string) (io.ReadWriteCloser, error) {
-	if slices.Contains(TPMDEVICES, path) {
-		return tpmutil.OpenTPM(path)
-	} else if path == "simulator" {
-		return simulator.Get()
-	} else {
-		return net.Dial("tcp", path)
-	}
-}
 
 const (
 	maxInputBuffer = 1024
@@ -38,7 +24,7 @@ const (
 //	parentAuth: TPM passphrase auth for the parent
 //	keyAuth:  TPM passphrase auth for the hmac key
 //	data:  the data to hmac
-func TPMHMAC(tpmPath string, rwc io.ReadWriteCloser, pemkeyBytes []byte, parentAuth []byte, keyAuth []byte, sessionEncryptionName string, data []byte) ([]byte, error) {
+func TPMHMAC(tpmPath string, rwc io.ReadWriteCloser, pemkeyBytes []byte, parentAuth []byte, session tpmpolicy.Session, sessionEncryptionName string, data []byte) ([]byte, error) {
 
 	var irwc io.ReadWriteCloser
 
@@ -46,7 +32,7 @@ func TPMHMAC(tpmPath string, rwc io.ReadWriteCloser, pemkeyBytes []byte, parentA
 		irwc = rwc
 	} else if tpmPath != "" {
 		var err error
-		irwc, err = OpenTPM(tpmPath)
+		irwc, err = tpmutil.OpenTPM(tpmPath)
 		if err != nil {
 			return nil, err
 		}
@@ -62,13 +48,6 @@ func TPMHMAC(tpmPath string, rwc io.ReadWriteCloser, pemkeyBytes []byte, parentA
 	key, err := keyfile.Decode(pemkeyBytes)
 	if err != nil {
 		return nil, err
-	}
-
-	if len(parentAuth) == 0 {
-		parentAuth = nil
-	}
-	if len(keyAuth) == 0 {
-		keyAuth = nil
 	}
 
 	var esess tpm2.Session
@@ -112,7 +91,6 @@ func TPMHMAC(tpmPath string, rwc io.ReadWriteCloser, pemkeyBytes []byte, parentA
 			return nil, err
 		}
 	} else {
-
 		esess, esessloser, err = tpm2.HMACSession(rwr, tpm2.TPMAlgSHA256, 16, tpm2.Auth(nil), tpm2.AESEncryption(128, tpm2.EncryptInOut), tpm2.Salted(createEKRsp.ObjectHandle, *ePubName))
 		if err != nil {
 			return nil, err
@@ -128,6 +106,13 @@ func TPMHMAC(tpmPath string, rwc io.ReadWriteCloser, pemkeyBytes []byte, parentA
 			Auth:   tpm2.PasswordAuth(nil),
 		},
 		InPublic: tpm2.New2B(keyfile.ECCSRK_H2_Template),
+		InSensitive: tpm2.TPM2BSensitiveCreate{
+			Sensitive: &tpm2.TPMSSensitiveCreate{
+				UserAuth: tpm2.TPM2BAuth{
+					Buffer: parentAuth,
+				},
+			},
+		},
 	}.Execute(rwr, esess)
 	if err != nil {
 		return nil, err
@@ -144,7 +129,7 @@ func TPMHMAC(tpmPath string, rwc io.ReadWriteCloser, pemkeyBytes []byte, parentA
 		ParentHandle: tpm2.AuthHandle{
 			Handle: primaryKey.ObjectHandle,
 			Name:   tpm2.TPM2BName(primaryKey.Name),
-			Auth:   tpm2.PasswordAuth(nil),
+			Auth:   tpm2.PasswordAuth(parentAuth),
 		},
 		InPublic:  key.Pubkey,
 		InPrivate: key.Privkey,
@@ -179,29 +164,18 @@ func TPMHMAC(tpmPath string, rwc io.ReadWriteCloser, pemkeyBytes []byte, parentA
 
 	var sas tpm2.Session
 	var sasCloser func() error
-
-	if keyAuth != nil {
-		sas, sasCloser, err = tpm2.PolicySession(rwr, tpm2.TPMAlgSHA256, 16, []tpm2.AuthOption{tpm2.Auth(keyAuth), tpm2.AESEncryption(128, tpm2.EncryptIn), tpm2.Salted(createEKRsp.ObjectHandle, *ePubName)}...)
-		if err != nil {
-			return nil, err
-		}
-
-		_, err = tpm2.PolicyAuthValue{
-			PolicySession: sas.Handle(),
-		}.Execute(rwr)
+	if session != nil {
+		sas, sasCloser, err = session.GetSession()
 		if err != nil {
 			return nil, err
 		}
 	} else {
-		sas, sasCloser, err = tpm2.HMACSession(rwr, tpm2.TPMAlgSHA256, 16, tpm2.Auth(keyAuth), tpm2.AESEncryption(128, tpm2.EncryptIn), tpm2.Salted(createEKRsp.ObjectHandle, *ePubName))
+		sas, sasCloser, err = tpm2.HMACSession(rwr, tpm2.TPMAlgSHA256, 16, tpm2.Auth(nil), tpm2.AESEncryption(128, tpm2.EncryptIn), tpm2.Salted(createEKRsp.ObjectHandle, *ePubName))
 		if err != nil {
 			return nil, err
 		}
 	}
-
-	defer func() {
-		_ = sasCloser()
-	}()
+	defer sasCloser()
 
 	hmacStart := tpm2.HmacStart{
 		Handle: tpm2.AuthHandle{

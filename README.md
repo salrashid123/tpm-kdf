@@ -84,19 +84,6 @@ import (
 	fmt.Printf("Derived Key (%d bytes): %x\n", len(derivedKey), derivedKey)
 ```
 
-The core accepts the following parameters:
-
-```golang
-func TPMKDF(
-	tpmPath string, 
-	rwc io.ReadWriteCloser, 
-	pemkeyBytes []byte, 
-	parentAuth []byte, 
-	keyAuth []byte,
-	sessionEncryptionName string,
-	data []byte) (*tpmPrf, error) {
-```
-
 if you want the library to open and close the tpm for every call, specify the `tpmPath` (eg `tpmPath=/dev/tpmrm0`)
 
 if you want to manage the TPM read closer externally, set `tpmPath` nil and set the `rwc` to a TPM
@@ -138,6 +125,9 @@ You can get the signed and attested binary on the `Releases` page
 | **`-length`** | result size |
 | **`-label`** | kdf label |
 | **`-context`** | kdf context |
+| **`-keyPass`** | Passphrase for the key handle  |
+| **`-parentPass`** | Passphrase for the owner handle |
+| **`-pcrValues`** | PCR Bound slot:value (increasing order, comma separated) |
 | **`-tpm-session-encrypt-with-name`** | hex encoded TPM object 'name' to use with an encrypted session|
 | **`-outputBase64`** | output as base64 |
 
@@ -175,28 +165,86 @@ tpm2_flushcontext -t && tpm2_flushcontext -s && tpm2_flushcontext -l
 tpm2_load -C primary.ctx -u hmac.pub -r hmac.priv -c hmac.ctx
 tpm2_encodeobject -C primary.ctx -u hmac.pub -r hmac.priv -o tpm-key.pem
 
-go run cmd/main.go  --label=foo --context=context \
+### with cli
+./tpm-kdf  --label=foo --context=context \
    --keyFile=example/certs/tpm-key.pem --length=256 --tpm-path="127.0.0.1:2321"
+
+### with library
+cd example/
+go run counter/main.go -in certs/tpm-key.pem --tpm-path="127.0.0.1:2321"  
 ```
+
+### Policy
+
+##### Password
 
 If you want to setup a key with auth, create an authsession and `policypassword` after the primary
 
 ```bash
-# tpm2_startauthsession -S session.dat
-# tpm2_policypassword -S session.dat -L policy.dat
-# tpm2_flushcontext session.dat
+printf '\x00\x00' > unique.dat
+tpm2_createprimary -C o -G ecc  -g sha256  -c primary.ctx -a "fixedtpm|fixedparent|sensitivedataorigin|userwithauth|noda|restricted|decrypt" -u unique.dat
 
-# tpm2_import -C primary.ctx -G hmac -i hmac.key -u hmac.pub -r hmac.priv -L policy.dat -p testpswd
-# tpm2_flushcontext -t && tpm2_flushcontext -s && tpm2_flushcontext -l
-# tpm2_load -C primary.ctx -u hmac.pub -r hmac.priv -c hmac.ctx
-# tpm2_encodeobject -C primary.ctx -u hmac.pub -r hmac.priv -o tpm-key.pem 
-# tpm2_flushcontext -t && tpm2_flushcontext -s && tpm2_flushcontext -l
+tpm2_startauthsession -S session.dat
+tpm2_policypassword -S session.dat -L policy.dat
+tpm2_flushcontext session.dat
 
-go run cmd/main.go  --label=foo  \
-   --keyFile=example/certs_policy/tpm-key.pem --keyPass=testpswd --length=256 --tpm-path="127.0.0.1:2321"
+echo -n "my_api_key" > hmac.key
+hexkey=$(xxd -p -c 256 < hmac.key)
+
+tpm2_import -C primary.ctx -G hmac -i hmac.key -u hmac.pub -r hmac.priv -L policy.dat
+tpm2_flushcontext -t && tpm2_flushcontext -s && tpm2_flushcontext -l
+tpm2_load -C primary.ctx -u hmac.pub -r hmac.priv -c hmac.ctx
+tpm2_encodeobject -C primary.ctx -u hmac.pub -r hmac.priv -o tpm-key.pem 
+tpm2_flushcontext -t && tpm2_flushcontext -s && tpm2_flushcontext -l
+
+## with cli
+./tpm-kdf   --label=foo  \
+   --keyFile=example/certs_policy_password/tpm-key.pem --keyPass=testpswd --length=256 --tpm-path="127.0.0.1:2321"
+
+## with library
+cd example/
+go run policy_password/main.go -in certs_policy_password/tpm-key.pem --password=testpswd --tpm-path="127.0.0.1:2321"
 ```
 
-THe current release only uses passwordAuth.  
+##### PCR Policy
+
+If you want to bind the hmac key to a PCR value,
+
+```bash
+$ tpm2_pcrread sha256:23
+  sha256:
+    23: 0x0000000000000000000000000000000000000000000000000000000000000000
+$ tpm2_pcrextend 23:sha256=0x0000000000000000000000000000000000000000000000000000000000000000
+$ tpm2_pcrread sha256:23
+  sha256:
+    23: 0xF5A5FD42D16A20302798EF6ED309979B43003D2320D9F0E8EA9831A92759FB4B
+
+printf '\x00\x00' > unique.dat
+tpm2_createprimary -C o -G ecc  -g sha256  -c primary.ctx -a "fixedtpm|fixedparent|sensitivedataorigin|userwithauth|noda|restricted|decrypt" -u unique.dat
+
+tpm2_pcrread sha256:23
+tpm2_startauthsession -S session.dat
+tpm2_policypcr -S session.dat -l sha256:23  -L policy.dat
+tpm2_flushcontext session.dat
+
+echo -n "my_api_key" > hmac.key
+hexkey=$(xxd -p -c 256 < hmac.key)
+
+tpm2_import -C primary.ctx -G hmac -i hmac.key -u hmac.pub -r hmac.priv -L policy.dat
+tpm2_flushcontext -t && tpm2_flushcontext -s && tpm2_flushcontext -l
+tpm2_load -C primary.ctx -u hmac.pub -r hmac.priv -c hmac.ctx
+tpm2_flushcontext -t && tpm2_flushcontext -s && tpm2_flushcontext -l	
+tpm2_encodeobject -C primary.ctx -u hmac.pub -r hmac.priv -o tpm-key.pem
+
+### with cli
+./tpm-kdf  --label=foo  \
+   --keyFile=example/certs_policy_pcr/tpm-key.pem --pcrValues=23:F5A5FD42D16A20302798EF6ED309979B43003D2320D9F0E8EA9831A92759FB4B \
+    --length=256 --tpm-path="127.0.0.1:2321"
+
+## with library
+cd example/
+go run policy_pcr/main.go -in certs_policy_pcr/tpm-key.pem --pcr=23 --tpm-path="127.0.0.1:2321"   
+```
 
 Other policy times can get encoded into the TPM but i'm just waiting for the  specs to finalize.  For now, see [Reconstruct Policy using command parameters](https://github.com/salrashid123/tpm2/tree/master/policy_gen)
 
